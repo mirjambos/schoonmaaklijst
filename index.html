@@ -59,6 +59,7 @@
   .timer-display { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .timer-btns button { border: none; border-radius: 6px; padding: 8px 14px; font-size: 13px; font-weight: 700; cursor: pointer; margin-left: 6px; }
   .timer-btns .start-btn { background: var(--brown); color: #fff; }
+  .timer-btns .pause-btn { background: var(--pink-dark); color: #fff; }
   .timer-btns .stop-btn { background: var(--red); color: #fff; }
   .history-item .h-comment { margin-top: 4px; color: var(--gray); font-style: italic; }
 
@@ -249,29 +250,48 @@ function formatDuration(seconds) {
   return [h, m, s].map(n => String(n).padStart(2, '0')).join(':');
 }
 
-async function getTimerStart(location) {
+// Timerstand per locatie: { startedAt: ISOtijd van het huidige lopende stukje (of null
+// als gepauzeerd/gestopt), accumulated: eerder opgebouwde seconden uit vorige stukjes }.
+// Zo telt Pauze -> Hervatten gewoon door i.p.v. weer bij 0 te beginnen.
+async function getTimerData(location) {
   const raw = lsGet('timer_' + location);
-  if (!raw) return null;
-  try { return JSON.parse(raw).startedAt; } catch (e) { return null; }
+  if (!raw) return { startedAt: null, accumulated: 0 };
+  try {
+    const d = JSON.parse(raw);
+    return { startedAt: d.startedAt || null, accumulated: d.accumulated || 0 };
+  } catch (e) { return { startedAt: null, accumulated: 0 }; }
 }
-async function setTimerStart(location, startedAt) {
-  if (startedAt === null) { lsDelete('timer_' + location); }
-  else { lsSet('timer_' + location, JSON.stringify({ startedAt })); }
+async function setTimerData(location, data) {
+  if (!data.startedAt && !data.accumulated) { lsDelete('timer_' + location); }
+  else { lsSet('timer_' + location, JSON.stringify(data)); }
 }
 
 async function startTimer(location) {
-  const startedAt = new Date().toISOString();
-  await setTimerStart(location, startedAt);
+  const data = await getTimerData(location);
+  data.startedAt = new Date().toISOString();
+  await setTimerData(location, data);
   finishedDurations[location] = null;
   await refreshTimerDisplay(location);
 }
 
-async function stopTimer(location) {
-  const startedAt = await getTimerStart(location);
-  if (startedAt) {
-    finishedDurations[location] = Math.round((new Date() - new Date(startedAt)) / 1000);
+async function pauseTimer(location) {
+  const data = await getTimerData(location);
+  if (data.startedAt) {
+    data.accumulated = (data.accumulated || 0) + Math.round((new Date() - new Date(data.startedAt)) / 1000);
+    data.startedAt = null;
   }
-  await setTimerStart(location, null);
+  await setTimerData(location, data);
+  await refreshTimerDisplay(location);
+}
+
+async function stopTimer(location) {
+  const data = await getTimerData(location);
+  let total = data.accumulated || 0;
+  if (data.startedAt) {
+    total += Math.round((new Date() - new Date(data.startedAt)) / 1000);
+  }
+  finishedDurations[location] = total;
+  await setTimerData(location, { startedAt: null, accumulated: 0 });
   if (timerIntervals[location]) { clearInterval(timerIntervals[location]); timerIntervals[location] = null; }
   await refreshTimerDisplay(location);
 }
@@ -279,20 +299,31 @@ async function stopTimer(location) {
 async function refreshTimerDisplay(location) {
   const display = document.getElementById(location + '-timer-display');
   const startBtn = document.getElementById(location + '-start-btn');
+  const pauseBtn = document.getElementById(location + '-pause-btn');
+  const resumeBtn = document.getElementById(location + '-resume-btn');
   const stopBtn = document.getElementById(location + '-stop-btn');
   if (!display) return;
   if (timerIntervals[location]) { clearInterval(timerIntervals[location]); timerIntervals[location] = null; }
 
-  const startedAt = await getTimerStart(location);
-  if (startedAt) {
-    startBtn.style.display = 'none';
-    stopBtn.style.display = 'inline-block';
-    const tick = () => { display.textContent = formatDuration(Math.round((new Date() - new Date(startedAt)) / 1000)); };
+  const data = await getTimerData(location);
+  const isRunning = !!data.startedAt;
+  const isPaused = !isRunning && (data.accumulated || 0) > 0;
+
+  startBtn.style.display = (!isRunning && !isPaused) ? 'inline-block' : 'none';
+  pauseBtn.style.display = isRunning ? 'inline-block' : 'none';
+  resumeBtn.style.display = isPaused ? 'inline-block' : 'none';
+  stopBtn.style.display = (isRunning || isPaused) ? 'inline-block' : 'none';
+
+  if (isRunning) {
+    const tick = () => {
+      const elapsed = (data.accumulated || 0) + Math.round((new Date() - new Date(data.startedAt)) / 1000);
+      display.textContent = formatDuration(elapsed);
+    };
     tick();
     timerIntervals[location] = setInterval(tick, 1000);
+  } else if (isPaused) {
+    display.textContent = formatDuration(data.accumulated);
   } else {
-    startBtn.style.display = 'inline-block';
-    stopBtn.style.display = 'none';
     display.textContent = finishedDurations[location] ? formatDuration(finishedDurations[location]) : '00:00:00';
   }
 }
@@ -402,6 +433,8 @@ function renderView(location) {
         <span class="timer-display" id="${location}-timer-display">00:00:00</span>
         <span class="timer-btns">
           <button class="start-btn" id="${location}-start-btn" onclick="startTimer('${location}')">Start</button>
+          <button class="pause-btn" id="${location}-pause-btn" onclick="pauseTimer('${location}')" style="display:none;">Pauze</button>
+          <button class="start-btn" id="${location}-resume-btn" onclick="startTimer('${location}')" style="display:none;">Hervatten</button>
           <button class="stop-btn" id="${location}-stop-btn" onclick="stopTimer('${location}')" style="display:none;">Stop</button>
         </span>
       </div>
@@ -464,9 +497,9 @@ async function signOff(location) {
   const checkedIds = Object.keys(checkedThisSession[location] || {}).filter(id => checkedThisSession[location][id]);
   if (checkedIds.length === 0) { showToast('Vink minstens één taak aan voordat je aftekent.'); return; }
 
-  // if the timer is still running, stop it so the duration is captured
-  const stillRunning = await getTimerStart(location);
-  if (stillRunning) { await stopTimer(location); }
+  // sluit een lopende of gepauzeerde timer af zodat de bestede tijd wordt vastgelegd
+  const timerData = await getTimerData(location);
+  if (timerData.startedAt || timerData.accumulated > 0) { await stopTimer(location); }
   const duration = finishedDurations[location];
 
   const tasks = getEffectiveTasks(location);
