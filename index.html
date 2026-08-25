@@ -61,6 +61,16 @@
   .timer-btns .start-btn { background: var(--brown); color: #fff; }
   .timer-btns .stop-btn { background: var(--red); color: #fff; }
   .history-item .h-comment { margin-top: 4px; color: var(--gray); font-style: italic; }
+
+  .admin-add-task { background: #fff; border: 1px dashed var(--pink-dark); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+  .admin-add-title { font-size: 12px; font-weight: 700; color: var(--gray); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 8px; }
+  .admin-add-task input[type="text"] { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; margin-bottom: 8px; }
+  .admin-add-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .admin-add-row select { flex: 1; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+  .admin-add-row button { background: var(--brown); color: #fff; border: none; border-radius: 6px; padding: 8px 14px; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+  .reset-link { background: none; border: none; color: var(--gray); font-size: 11px; text-decoration: underline; cursor: pointer; padding: 0; }
+  .admin-task-actions { display: flex; gap: 6px; margin-left: 6px; flex-shrink: 0; }
+  .admin-task-actions button { background: none; border: 1px solid var(--border); border-radius: 6px; padding: 4px 7px; font-size: 12px; cursor: pointer; line-height: 1; }
 </style>
 </head>
 <body>
@@ -99,6 +109,10 @@ const GROUP_META = {
 };
 const GROUP_ORDER = ["w", "2w", "m", "q"];
 
+// Standaard werkzaamheden. Dit blijft de "fabrieksinstelling" -- eigen aanpassingen/
+// toevoegingen/verwijderingen uit Beheer worden er los van bewaard (zie tasks_<locatie>
+// in localStorage) en overschrijven deze lijst nooit. "Standaardlijst herstellen" in
+// Beheer zet een locatie terug op precies deze lijst.
 const TASK_DEFS = {
   huis: [
     { id: "h-vloeren", text: "Stofzuigen alle vloeren (woonkamer, keuken, slaapkamers, gang)", group: "w" },
@@ -148,13 +162,85 @@ const TASK_DEFS = {
 };
 
 let state = {};        // taskId -> { lastDone: 'YYYY-MM-DD' }
-let overrides = {};    // taskId -> groupId (manual moves)
 let history = [];      // array of records
 let checkedThisSession = { huis: {}, kantoor: {} };
 let adminMode = false;
 let reportEmail = "";
 let timerIntervals = { huis: null, kantoor: null };
 let finishedDurations = { huis: null, kantoor: null };
+
+// -- Opslag: gewone browser localStorage. Werkt overal (ook op een statische
+// GitHub Pages-site), in tegenstelling tot de eerder gebruikte window.storage-API
+// die alleen binnen Claude's eigen omgeving bestaat.
+const LS_PREFIX = "schoonmaak_";
+function lsGet(key) {
+  try { return localStorage.getItem(LS_PREFIX + key); } catch (e) { return null; }
+}
+function lsSet(key, value) {
+  try { localStorage.setItem(LS_PREFIX + key, value); } catch (e) { console.error(e); }
+}
+function lsDelete(key) {
+  try { localStorage.removeItem(LS_PREFIX + key); } catch (e) { console.error(e); }
+}
+
+function cloneTasks(arr) { return arr.map(t => ({ ...t })); }
+
+// Geeft de actuele werkzaamhedenlijst voor een locatie terug: de bewaarde eigen
+// versie (na bewerken/toevoegen/verwijderen) als die bestaat, anders de standaardlijst.
+function getEffectiveTasks(location) {
+  const raw = lsGet("tasks_" + location);
+  if (raw) {
+    try { return JSON.parse(raw); } catch (e) {}
+  }
+  return cloneTasks(TASK_DEFS[location]);
+}
+function saveEffectiveTasks(location, tasks) {
+  lsSet("tasks_" + location, JSON.stringify(tasks));
+}
+function resetTasks(location) {
+  const label = location === "huis" ? "Huis" : "Kantoor";
+  if (!window.confirm('Standaardlijst herstellen voor ' + label + '? Eigen aanpassingen en toevoegingen gaan dan verloren.')) return;
+  lsDelete("tasks_" + location);
+  renderView(location);
+  showToast('Standaardlijst hersteld voor ' + label + '.');
+}
+
+function addTask(location) {
+  const textInput = document.getElementById(location + '-new-task-text');
+  const groupSelect = document.getElementById(location + '-new-task-group');
+  const text = textInput.value.trim();
+  if (!text) { showToast('Vul eerst een omschrijving in.'); return; }
+  const tasks = getEffectiveTasks(location);
+  const id = 'custom-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  tasks.push({ id, text, group: groupSelect.value });
+  saveEffectiveTasks(location, tasks);
+  renderView(location);
+  showToast('Werkzaamheid toegevoegd.');
+}
+
+function editTaskText(location, taskId) {
+  const tasks = getEffectiveTasks(location);
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) return;
+  const newText = window.prompt('Werkzaamheid aanpassen:', task.text);
+  if (newText === null) return;
+  const trimmed = newText.trim();
+  if (!trimmed) { showToast('Werkzaamheid mag niet leeg zijn.'); return; }
+  task.text = trimmed;
+  saveEffectiveTasks(location, tasks);
+  renderView(location);
+  showToast('Werkzaamheid aangepast.');
+}
+
+function deleteTask(location, taskId) {
+  const tasks = getEffectiveTasks(location);
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) return;
+  if (!window.confirm('Werkzaamheid verwijderen: "' + task.text + '"?')) return;
+  saveEffectiveTasks(location, tasks.filter(t => t.id !== taskId));
+  renderView(location);
+  showToast('Werkzaamheid verwijderd.');
+}
 
 function formatDuration(seconds) {
   const h = Math.floor(seconds / 3600);
@@ -164,16 +250,13 @@ function formatDuration(seconds) {
 }
 
 async function getTimerStart(location) {
-  try {
-    const r = await window.storage.get('timer-' + location, true);
-    return r && r.value ? JSON.parse(r.value).startedAt : null;
-  } catch (e) { return null; }
+  const raw = lsGet('timer_' + location);
+  if (!raw) return null;
+  try { return JSON.parse(raw).startedAt; } catch (e) { return null; }
 }
 async function setTimerStart(location, startedAt) {
-  try {
-    if (startedAt === null) { await window.storage.delete('timer-' + location, true); }
-    else { await window.storage.set('timer-' + location, JSON.stringify({ startedAt }), true); }
-  } catch (e) { console.error(e); }
+  if (startedAt === null) { lsDelete('timer_' + location); }
+  else { lsSet('timer_' + location, JSON.stringify({ startedAt })); }
 }
 
 async function startTimer(location) {
@@ -223,7 +306,6 @@ function formatDateNL(dateStr) {
   if (!dateStr) return "nog nooit gedaan";
   return new Date(dateStr).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
 }
-function effectiveGroup(task) { return overrides[task.id] || task.group; }
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
@@ -231,18 +313,17 @@ function escapeHtml(str) {
 }
 
 async function loadAll() {
-  try { const r = await window.storage.get('tasks-state', true); state = r && r.value ? JSON.parse(r.value) : {}; } catch(e) { state = {}; }
-  try { const r = await window.storage.get('group-overrides', true); overrides = r && r.value ? JSON.parse(r.value) : {}; } catch(e) { overrides = {}; }
-  try { const r = await window.storage.get('signoff-history', true); history = r && r.value ? JSON.parse(r.value) : []; } catch(e) { history = []; }
-  try { const r = await window.storage.get('report-recipient', true); reportEmail = r && r.value ? r.value : ""; } catch(e) { reportEmail = ""; }
+  try { const raw = lsGet('tasks_state'); state = raw ? JSON.parse(raw) : {}; } catch (e) { state = {}; }
+  try { const raw = lsGet('signoff_history'); history = raw ? JSON.parse(raw) : []; } catch (e) { history = []; }
+  try { reportEmail = lsGet('report_email') || ""; } catch (e) { reportEmail = ""; }
   document.getElementById('report-email').value = reportEmail;
 }
-async function saveState() { try { await window.storage.set('tasks-state', JSON.stringify(state), true); } catch(e) { console.error(e); } }
-async function saveOverrides() { try { await window.storage.set('group-overrides', JSON.stringify(overrides), true); } catch(e) { console.error(e); } }
-async function saveHistory() { try { await window.storage.set('signoff-history', JSON.stringify(history), true); } catch(e) { console.error(e); } }
+async function saveState() { lsSet('tasks_state', JSON.stringify(state)); }
+async function saveHistory() { lsSet('signoff_history', JSON.stringify(history)); }
 async function saveRecipient() {
   reportEmail = document.getElementById('report-email').value.trim();
-  try { await window.storage.set('report-recipient', reportEmail, true); showToast('E-mailadres opgeslagen.'); } catch(e) { console.error(e); }
+  lsSet('report_email', reportEmail);
+  showToast('E-mailadres opgeslagen.');
 }
 
 function toggleAdmin() {
@@ -253,20 +334,38 @@ function toggleAdmin() {
   renderView('kantoor');
 }
 
-async function moveTask(location, taskId, newGroup) {
-  overrides[taskId] = newGroup;
-  await saveOverrides();
+function moveTask(location, taskId, newGroup) {
+  const tasks = getEffectiveTasks(location);
+  const task = tasks.find(t => t.id === taskId);
+  if (!task) return;
+  task.group = newGroup;
+  saveEffectiveTasks(location, tasks);
   renderView(location);
 }
 
 function renderView(location) {
-  const tasks = TASK_DEFS[location];
+  const tasks = getEffectiveTasks(location);
   const container = document.getElementById(location + '-view');
   let html = '';
 
+  if (adminMode) {
+    html += `
+      <div class="admin-add-task">
+        <div class="admin-add-title">Nieuwe werkzaamheid toevoegen</div>
+        <input type="text" id="${location}-new-task-text" placeholder="Omschrijving van de werkzaamheid...">
+        <div class="admin-add-row">
+          <select id="${location}-new-task-group">
+            ${GROUP_ORDER.map(g => `<option value="${g}">${GROUP_META[g].title}</option>`).join('')}
+          </select>
+          <button type="button" onclick="addTask('${location}')">+ Toevoegen</button>
+        </div>
+        <button type="button" class="reset-link" onclick="resetTasks('${location}')">Standaardlijst herstellen</button>
+      </div>`;
+  }
+
   GROUP_ORDER.forEach(groupId => {
     const meta = GROUP_META[groupId];
-    const groupTasks = tasks.filter(t => effectiveGroup(t) === groupId);
+    const groupTasks = tasks.filter(t => t.group === groupId);
     if (groupTasks.length === 0) return;
     html += `<div class="group"><div class="group-header"><span>${meta.title}</span><span class="freq-note">elke ${meta.days === 7 ? 'week' : meta.days + ' dagen'}</span></div>`;
     groupTasks.forEach(task => {
@@ -279,13 +378,18 @@ function renderView(location) {
         <div class="task ${isDue ? 'due' : ''}">
           <input type="checkbox" id="${task.id}" ${checked} onchange="toggleTask('${location}','${task.id}')">
           <label for="${task.id}">
-            ${task.text} ${isMissed ? '<span class="missed-badge">VORIGE KEER GEMIST</span>' : (isDue ? '<span class="due-badge">TE DOEN</span>' : '')}
+            ${escapeHtml(task.text)} ${isMissed ? '<span class="missed-badge">VORIGE KEER GEMIST</span>' : (isDue ? '<span class="due-badge">TE DOEN</span>' : '')}
             <span class="last-done">Laatst gedaan: ${formatDateNL(last)}</span>
             ${adminMode ? `
               <select class="move-select" onchange="moveTask('${location}','${task.id}', this.value)">
                 ${GROUP_ORDER.map(g => `<option value="${g}" ${g === groupId ? 'selected' : ''}>${GROUP_META[g].title}</option>`).join('')}
               </select>` : ''}
           </label>
+          ${adminMode ? `
+            <div class="admin-task-actions">
+              <button type="button" title="Werkzaamheid bewerken" onclick="editTaskText('${location}','${task.id}')">&#9998;</button>
+              <button type="button" title="Werkzaamheid verwijderen" onclick="deleteTask('${location}','${task.id}')">&#128465;</button>
+            </div>` : ''}
         </div>`;
     });
     html += `</div>`;
@@ -354,28 +458,6 @@ function buildReportText(location, date, duration, doneItems, dueItems, comments
   return lines.join('\n');
 }
 
-async function sendReportEmail(location, date, duration, doneItems, dueItems, comments) {
-  if (!reportEmail) return;
-  const label = location === 'huis' ? 'Huis' : 'Kantoor';
-  const subject = `Schoonmaakrapport ${label} - ${date}`;
-  const body = buildReportText(location, date, duration, doneItems, dueItems, comments);
-  const prompt = `Verstuur via Gmail een e-mail naar ${reportEmail} met als onderwerp "${subject}" en exact de volgende inhoud als body (behoud de regels zoals ze zijn, verstuur direct zonder te vragen om bevestiging):\n\n${body}`;
-  try {
-    await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1000,
-        messages: [{ role: "user", content: prompt }],
-        mcp_servers: [{ type: "url", url: "https://gmailmcp.googleapis.com/mcp/v1", name: "gmail" }]
-      })
-    });
-  } catch (e) {
-    console.error('Rapport e-mail versturen mislukt', e);
-  }
-}
-
 async function signOff(location) {
   const commentsInput = document.getElementById(location + '-comments');
 
@@ -387,7 +469,7 @@ async function signOff(location) {
   if (stillRunning) { await stopTimer(location); }
   const duration = finishedDurations[location];
 
-  const tasks = TASK_DEFS[location];
+  const tasks = getEffectiveTasks(location);
   const idToText = {};
   tasks.forEach(t => idToText[t.id] = t.text);
 
@@ -399,7 +481,7 @@ async function signOff(location) {
   const dueItems = tasks
     .filter(t => !checkedIds.includes(t.id))
     .filter(t => {
-      const meta = GROUP_META[effectiveGroup(t)];
+      const meta = GROUP_META[t.group];
       const last = state[t.id] ? state[t.id].lastDone : null;
       return daysSince(last) >= meta.days;
     })
@@ -410,11 +492,9 @@ async function signOff(location) {
   history.push({ location, date: today, duration, comments, count: checkedIds.length });
   await saveHistory();
 
-  await sendReportEmail(location, today, duration, doneItems, dueItems, comments);
-
   checkedThisSession[location] = {};
   finishedDurations[location] = null;
-  showToast(reportEmail ? ('Bedankt! Opgeslagen en rapport verstuurd naar ' + reportEmail) : 'Bedankt! Aftekening opgeslagen.');
+  showToast(reportEmail ? ('Bedankt! Opgeslagen (e-mailrapport is nog niet actief).') : 'Bedankt! Aftekening opgeslagen.');
   renderView(location);
 }
 
