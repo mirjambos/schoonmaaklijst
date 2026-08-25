@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Schoonmaaklijst</title>
+<style>
+  :root {
+    --brown: #2D2827;
+    --pink: #E0A2A2;
+    --pink-dark: #c98080;
+    --light: #FBF6F6;
+    --gray: #8a8382;
+    --red: #b5504a;
+    --border: #e8dede;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: Arial, "Open Sans", sans-serif; background: var(--light); color: var(--brown); }
+  header { background: var(--brown); color: var(--light); padding: 18px 16px; display: flex; justify-content: space-between; align-items: flex-start; }
+  header .titles h1 { margin: 0 0 4px 0; font-size: 20px; font-weight: 700; }
+  header .titles p { margin: 0; font-size: 13px; color: var(--pink); }
+  #admin-toggle { background: transparent; border: 1px solid var(--pink); color: var(--pink); border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
+  #admin-toggle.on { background: var(--pink); color: var(--brown); }
+  .admin-bar { background: #f6ecec; border-bottom: 1px solid var(--border); padding: 10px 16px; display: none; }
+  .admin-bar.show { display: block; }
+  .admin-bar label { font-size: 12px; color: var(--gray); display: block; margin-bottom: 4px; }
+  .admin-bar input { width: 100%; max-width: 360px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+  .tabs { display: flex; background: #fff; border-bottom: 2px solid var(--border); position: sticky; top: 0; z-index: 10; }
+  .tab { flex: 1; padding: 14px; text-align: center; font-weight: 700; font-size: 14px; color: var(--gray); cursor: pointer; border-bottom: 3px solid transparent; }
+  .tab.active { color: var(--brown); border-bottom: 3px solid var(--pink); }
+  .container { max-width: 640px; margin: 0 auto; padding: 16px; }
+  .view { display: none; }
+  .view.active { display: block; }
+  .group { margin-bottom: 18px; background: #fff; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+  .group-header { padding: 10px 14px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; background: #f6ecec; color: var(--brown); display: flex; justify-content: space-between; align-items: center; }
+  .group-header .freq-note { font-size: 11px; font-weight: 400; text-transform: none; color: var(--gray); }
+  .task { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--border); }
+  .task.due { background: #fdf5f0; }
+  .task input[type="checkbox"] { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--pink-dark); flex-shrink: 0; }
+  .task label { flex: 1; font-size: 14.5px; line-height: 1.4; }
+  .task .last-done { display: block; font-size: 11px; color: var(--gray); margin-top: 2px; }
+  .due-badge { font-size: 10px; font-weight: 700; background: var(--pink-dark); color: #fff; padding: 2px 6px; border-radius: 8px; margin-left: 6px; white-space: nowrap; }
+  .missed-badge { font-size: 10px; font-weight: 700; background: var(--red); color: #fff; padding: 2px 6px; border-radius: 8px; margin-left: 6px; white-space: nowrap; }
+  .move-select { margin-top: 6px; font-size: 12px; padding: 4px; border: 1px solid var(--border); border-radius: 5px; }
+  .signoff { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-top: 20px; }
+  .signoff h3 { margin: 0 0 10px 0; font-size: 15px; }
+  .signoff input, .signoff textarea { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; font-size: 14px; margin-bottom: 10px; }
+  .signoff textarea { min-height: 70px; resize: vertical; }
+  button.primary { width: 100%; padding: 14px; background: var(--brown); color: #fff; border: none; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; }
+  button.primary:disabled { background: #ccc; cursor: not-allowed; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--brown); color: #fff; padding: 12px 18px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity 0.3s; pointer-events: none; max-width: 90%; text-align: center; z-index: 100;}
+  .toast.show { opacity: 1; }
+  .history { margin-top: 20px; }
+  .history h3 { font-size: 14px; color: var(--gray); margin-bottom: 8px; }
+  .history-item { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px; }
+  .history-item .h-top { display: flex; justify-content: space-between; font-weight: 700; }
+
+  .timer-box { display: flex; align-items: center; justify-content: space-between; background: #f6ecec; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; }
+  .timer-display { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .timer-btns button { border: none; border-radius: 6px; padding: 8px 14px; font-size: 13px; font-weight: 700; cursor: pointer; margin-left: 6px; }
+  .timer-btns .start-btn { background: var(--brown); color: #fff; }
+  .timer-btns .stop-btn { background: var(--red); color: #fff; }
+  .history-item .h-comment { margin-top: 4px; color: var(--gray); font-style: italic; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="titles">
+    <h1>Schoonmaaklijst</h1>
+    <p id="date-label">Laden...</p>
+  </div>
+  <button id="admin-toggle" onclick="toggleAdmin()">Beheer</button>
+</header>
+
+<div class="admin-bar" id="admin-bar">
+  <label>E-mailadres voor rapport (verstuurd zodra iemand aftekent)</label>
+  <input type="email" id="report-email" placeholder="naam@voorbeeld.nl" onchange="saveRecipient()">
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="huis">Huis</div>
+  <div class="tab" data-tab="kantoor">Kantoor</div>
+</div>
+
+<div class="container">
+  <div id="huis-view" class="view active"><div style="text-align:center;padding:40px;color:#8a8382;">Bezig met laden...</div></div>
+  <div id="kantoor-view" class="view"></div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const GROUP_META = {
+  w:  { title: "Wekelijks", days: 7 },
+  "2w": { title: "Tweewekelijks", days: 14 },
+  m:  { title: "Maandelijks", days: 30 },
+  q:  { title: "Per kwartaal", days: 90 }
+};
+const GROUP_ORDER = ["w", "2w", "m", "q"];
+
+const TASK_DEFS = {
+  huis: [
+    { id: "h-vloeren", text: "Stofzuigen alle vloeren (woonkamer, keuken, slaapkamers, gang)", group: "w" },
+    { id: "h-dweilen", text: "Dweilen harde vloeren", group: "w" },
+    { id: "h-wcbeneden", text: "Wc beneden: reinigen en prullenbak legen", group: "w" },
+    { id: "h-wcboven", text: "Wc boven: reinigen en prullenbak legen", group: "w" },
+    { id: "h-badkamer", text: "Badkamer: wc, wastafel, douche/bad reinigen (glazen douchewand) en prullenbak legen", group: "w" },
+    { id: "h-slaapkamer-prullenbak", text: "Ouderslaapkamer: prullenbak legen", group: "w" },
+    { id: "h-keuken", text: "Keuken: aanrecht, kookplaat, buitenkant apparatuur", group: "w" },
+    { id: "h-stof", text: "Stof afnemen (meubels, vensterbanken)", group: "w" },
+    { id: "h-bedden", text: "Bedden verschonen (indien lakens klaarliggen)", group: "w" },
+    { id: "h-robot-haren", text: "Robotstofzuiger: haren uit borstel/rol verwijderen", group: "w" },
+    { id: "h-robot-water", text: "Robotstofzuiger: vuil water weggooien en schoon water bijvullen", group: "w" },
+    { id: "h-ramen-binnen", text: "Ramen binnenzijde begane grond", group: "2w" },
+    { id: "h-deurklinken", text: "Deurklinken en lichtschakelaars afnemen", group: "2w" },
+    { id: "h-koelkast", text: "Koelkast binnenzijde", group: "m" },
+    { id: "h-magnetron", text: "Magnetron/oven: eerst schoonmaakprogramma aanzetten, daarna met doekje nareinigen", group: "m" },
+    { id: "h-onder-meubels", text: "Onder/achter meubels (o.a. bank)", group: "m" },
+    { id: "h-bank-kussens", text: "Kussens van de bank losmaken en ertussen reinigen", group: "m" },
+    { id: "h-keukenkastjes", text: "Keukenkastjes buitenkant", group: "m" },
+    { id: "h-deuren", text: "Deuren afnemen (witte kunststof deuren)", group: "m" },
+    { id: "h-houten-delen", text: "Houten liggende delen aan deur woonkamer afstoffen", group: "m" },
+    { id: "h-douche-ontkalken", text: "Glazen douchewand badkamer: grondig ontkalken", group: "m" },
+    { id: "h-radiatoren", text: "Radiatoren", group: "q" },
+    { id: "h-ramen-buiten", text: "Ramen buitenzijde (indien niet door glazenwasser gedaan)", group: "q" }
+  ],
+  kantoor: [
+    { id: "k-wc", text: "Wc: reinigen en prullenbak legen", group: "w" },
+    { id: "k-prullenbak", text: "Prullenbak(ken) bureaus/algemeen legen", group: "w" },
+    { id: "k-bureaus", text: "Bureaus afnemen", group: "w" },
+    { id: "k-vloer", text: "Vloer stofzuigen/dweilen", group: "w" },
+    { id: "k-keukenblokje-aanrecht", text: "Keukenblokje: aanrecht afnemen", group: "w" },
+    { id: "k-ramen-binnen", text: "Ramen binnenzijde", group: "2w" },
+    { id: "k-deurklinken", text: "Deurklinken en schakelaars", group: "2w" },
+    { id: "k-schermen", text: "Beeldschermen en toetsenborden droog stofvrij maken", group: "2w" },
+    { id: "k-vergaderkamer-vensterbank", text: "Vergaderkamer: vensterbank op de grond afstoffen", group: "2w" },
+    { id: "k-keukenblokje-buiten", text: "Keukenblokje: kastjes buitenkant afnemen", group: "m" },
+    { id: "k-kasten", text: "Kasten en dossierkasten buitenzijde afnemen", group: "m" },
+    { id: "k-onder-bureaus", text: "Onder/achter bureaus en meubels", group: "m" },
+    { id: "k-stopcontacten", text: "Stopcontacten en kabelgoten afstoffen", group: "m" },
+    { id: "k-planten", text: "Planten verzorgen en blad afnemen", group: "m" },
+    { id: "k-keukenblokje-binnen", text: "Keukenblokje: kastjes binnenkant leegmaken en reinigen", group: "q" },
+    { id: "k-gordijnen", text: "Gordijnen/lamellen", group: "q" },
+    { id: "k-radiatoren", text: "Radiatoren", group: "q" },
+    { id: "k-bekleding", text: "Bekleding meubels / vloerbedekking grondig afnemen", group: "q" }
+  ]
+};
+
+let state = {};        // taskId -> { lastDone: 'YYYY-MM-DD' }
+let overrides = {};    // taskId -> groupId (manual moves)
+let history = [];      // array of records
+let checkedThisSession = { huis: {}, kantoor: {} };
+let adminMode = false;
+let reportEmail = "";
+let timerIntervals = { huis: null, kantoor: null };
+let finishedDurations = { huis: null, kantoor: null };
+
+function formatDuration(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return [h, m, s].map(n => String(n).padStart(2, '0')).join(':');
+}
+
+async function getTimerStart(location) {
+  try {
+    const r = await window.storage.get('timer-' + location, true);
+    return r && r.value ? JSON.parse(r.value).startedAt : null;
+  } catch (e) { return null; }
+}
+async function setTimerStart(location, startedAt) {
+  try {
+    if (startedAt === null) { await window.storage.delete('timer-' + location, true); }
+    else { await window.storage.set('timer-' + location, JSON.stringify({ startedAt }), true); }
+  } catch (e) { console.error(e); }
+}
+
+async function startTimer(location) {
+  const startedAt = new Date().toISOString();
+  await setTimerStart(location, startedAt);
+  finishedDurations[location] = null;
+  await refreshTimerDisplay(location);
+}
+
+async function stopTimer(location) {
+  const startedAt = await getTimerStart(location);
+  if (startedAt) {
+    finishedDurations[location] = Math.round((new Date() - new Date(startedAt)) / 1000);
+  }
+  await setTimerStart(location, null);
+  if (timerIntervals[location]) { clearInterval(timerIntervals[location]); timerIntervals[location] = null; }
+  await refreshTimerDisplay(location);
+}
+
+async function refreshTimerDisplay(location) {
+  const display = document.getElementById(location + '-timer-display');
+  const startBtn = document.getElementById(location + '-start-btn');
+  const stopBtn = document.getElementById(location + '-stop-btn');
+  if (!display) return;
+  if (timerIntervals[location]) { clearInterval(timerIntervals[location]); timerIntervals[location] = null; }
+
+  const startedAt = await getTimerStart(location);
+  if (startedAt) {
+    startBtn.style.display = 'none';
+    stopBtn.style.display = 'inline-block';
+    const tick = () => { display.textContent = formatDuration(Math.round((new Date() - new Date(startedAt)) / 1000)); };
+    tick();
+    timerIntervals[location] = setInterval(tick, 1000);
+  } else {
+    startBtn.style.display = 'inline-block';
+    stopBtn.style.display = 'none';
+    display.textContent = finishedDurations[location] ? formatDuration(finishedDurations[location]) : '00:00:00';
+  }
+}
+
+function todayStr() { return new Date().toISOString().slice(0,10); }
+function daysSince(dateStr) {
+  if (!dateStr) return Infinity;
+  return Math.round((new Date(todayStr()) - new Date(dateStr)) / 86400000);
+}
+function formatDateNL(dateStr) {
+  if (!dateStr) return "nog nooit gedaan";
+  return new Date(dateStr).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+function effectiveGroup(task) { return overrides[task.id] || task.group; }
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+async function loadAll() {
+  try { const r = await window.storage.get('tasks-state', true); state = r && r.value ? JSON.parse(r.value) : {}; } catch(e) { state = {}; }
+  try { const r = await window.storage.get('group-overrides', true); overrides = r && r.value ? JSON.parse(r.value) : {}; } catch(e) { overrides = {}; }
+  try { const r = await window.storage.get('signoff-history', true); history = r && r.value ? JSON.parse(r.value) : []; } catch(e) { history = []; }
+  try { const r = await window.storage.get('report-recipient', true); reportEmail = r && r.value ? r.value : ""; } catch(e) { reportEmail = ""; }
+  document.getElementById('report-email').value = reportEmail;
+}
+async function saveState() { try { await window.storage.set('tasks-state', JSON.stringify(state), true); } catch(e) { console.error(e); } }
+async function saveOverrides() { try { await window.storage.set('group-overrides', JSON.stringify(overrides), true); } catch(e) { console.error(e); } }
+async function saveHistory() { try { await window.storage.set('signoff-history', JSON.stringify(history), true); } catch(e) { console.error(e); } }
+async function saveRecipient() {
+  reportEmail = document.getElementById('report-email').value.trim();
+  try { await window.storage.set('report-recipient', reportEmail, true); showToast('E-mailadres opgeslagen.'); } catch(e) { console.error(e); }
+}
+
+function toggleAdmin() {
+  adminMode = !adminMode;
+  document.getElementById('admin-toggle').classList.toggle('on', adminMode);
+  document.getElementById('admin-bar').classList.toggle('show', adminMode);
+  renderView('huis');
+  renderView('kantoor');
+}
+
+async function moveTask(location, taskId, newGroup) {
+  overrides[taskId] = newGroup;
+  await saveOverrides();
+  renderView(location);
+}
+
+function renderView(location) {
+  const tasks = TASK_DEFS[location];
+  const container = document.getElementById(location + '-view');
+  let html = '';
+
+  GROUP_ORDER.forEach(groupId => {
+    const meta = GROUP_META[groupId];
+    const groupTasks = tasks.filter(t => effectiveGroup(t) === groupId);
+    if (groupTasks.length === 0) return;
+    html += `<div class="group"><div class="group-header"><span>${meta.title}</span><span class="freq-note">elke ${meta.days === 7 ? 'week' : meta.days + ' dagen'}</span></div>`;
+    groupTasks.forEach(task => {
+      const last = state[task.id] ? state[task.id].lastDone : null;
+      const dSince = daysSince(last);
+      const isDue = dSince >= meta.days;
+      const isMissed = last !== null && dSince >= meta.days * 2;
+      const checked = checkedThisSession[location][task.id] ? 'checked' : '';
+      html += `
+        <div class="task ${isDue ? 'due' : ''}">
+          <input type="checkbox" id="${task.id}" ${checked} onchange="toggleTask('${location}','${task.id}')">
+          <label for="${task.id}">
+            ${task.text} ${isMissed ? '<span class="missed-badge">VORIGE KEER GEMIST</span>' : (isDue ? '<span class="due-badge">TE DOEN</span>' : '')}
+            <span class="last-done">Laatst gedaan: ${formatDateNL(last)}</span>
+            ${adminMode ? `
+              <select class="move-select" onchange="moveTask('${location}','${task.id}', this.value)">
+                ${GROUP_ORDER.map(g => `<option value="${g}" ${g === groupId ? 'selected' : ''}>${GROUP_META[g].title}</option>`).join('')}
+              </select>` : ''}
+          </label>
+        </div>`;
+    });
+    html += `</div>`;
+  });
+
+  html += `
+    <div class="signoff">
+      <h3>Tijd bijhouden</h3>
+      <div class="timer-box">
+        <span class="timer-display" id="${location}-timer-display">00:00:00</span>
+        <span class="timer-btns">
+          <button class="start-btn" id="${location}-start-btn" onclick="startTimer('${location}')">Start</button>
+          <button class="stop-btn" id="${location}-stop-btn" onclick="stopTimer('${location}')" style="display:none;">Stop</button>
+        </span>
+      </div>
+      <h3>Aftekenen voor vandaag</h3>
+      <textarea id="${location}-comments" placeholder="Opmerkingen (optioneel) — bijv. iets kapot, geen tijd voor iets, extra gedaan..."></textarea>
+      <button class="primary" onclick="signOff('${location}')">Aftekenen &amp; opslaan</button>
+    </div>
+    <div class="history">
+      <h3>Recente afmeldingen — ${location === 'huis' ? 'Huis' : 'Kantoor'}</h3>
+      <div id="${location}-history"></div>
+    </div>
+  `;
+  container.innerHTML = html;
+  renderHistory(location);
+  refreshTimerDisplay(location);
+}
+
+function renderHistory(location) {
+  const el = document.getElementById(location + '-history');
+  const entries = history.filter(h => h.location === location).slice(-8).reverse();
+  if (entries.length === 0) { el.innerHTML = '<div class="history-item">Nog geen afmeldingen.</div>'; return; }
+  el.innerHTML = entries.map(e => `
+    <div class="history-item">
+      <div class="h-top"><span>${formatDateNL(e.date)}</span><span>${e.duration ? formatDuration(e.duration) : ''}</span></div>
+      <div>${e.count} taken afgevinkt</div>
+      ${e.comments ? `<div class="h-comment">"${escapeHtml(e.comments)}"</div>` : ''}
+    </div>
+  `).join('');
+}
+
+function toggleTask(location, id) {
+  checkedThisSession[location][id] = document.getElementById(id).checked;
+}
+
+function buildReportText(location, date, duration, doneItems, dueItems, comments) {
+  const label = location === 'huis' ? 'Huis' : 'Kantoor';
+  let lines = [];
+  lines.push(`Schoonmaakrapport - ${label}`);
+  lines.push(`Datum: ${date}`);
+  if (duration) lines.push(`Tijd besteed: ${formatDuration(duration)}`);
+  lines.push('');
+  lines.push(`Afgevinkt vandaag (${doneItems.length}):`);
+  doneItems.forEach(t => lines.push('- ' + t));
+  lines.push('');
+  if (dueItems.length > 0) {
+    lines.push(`Nog openstaand / te doen (${dueItems.length}):`);
+    dueItems.forEach(t => lines.push('- ' + t));
+    lines.push('');
+  }
+  if (comments) {
+    lines.push('Opmerkingen van de schoonmaker:');
+    lines.push(comments);
+  }
+  return lines.join('\n');
+}
+
+async function sendReportEmail(location, date, duration, doneItems, dueItems, comments) {
+  if (!reportEmail) return;
+  const label = location === 'huis' ? 'Huis' : 'Kantoor';
+  const subject = `Schoonmaakrapport ${label} - ${date}`;
+  const body = buildReportText(location, date, duration, doneItems, dueItems, comments);
+  const prompt = `Verstuur via Gmail een e-mail naar ${reportEmail} met als onderwerp "${subject}" en exact de volgende inhoud als body (behoud de regels zoals ze zijn, verstuur direct zonder te vragen om bevestiging):\n\n${body}`;
+  try {
+    await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1000,
+        messages: [{ role: "user", content: prompt }],
+        mcp_servers: [{ type: "url", url: "https://gmailmcp.googleapis.com/mcp/v1", name: "gmail" }]
+      })
+    });
+  } catch (e) {
+    console.error('Rapport e-mail versturen mislukt', e);
+  }
+}
+
+async function signOff(location) {
+  const commentsInput = document.getElementById(location + '-comments');
+
+  const checkedIds = Object.keys(checkedThisSession[location] || {}).filter(id => checkedThisSession[location][id]);
+  if (checkedIds.length === 0) { showToast('Vink minstens één taak aan voordat je aftekent.'); return; }
+
+  // if the timer is still running, stop it so the duration is captured
+  const stillRunning = await getTimerStart(location);
+  if (stillRunning) { await stopTimer(location); }
+  const duration = finishedDurations[location];
+
+  const tasks = TASK_DEFS[location];
+  const idToText = {};
+  tasks.forEach(t => idToText[t.id] = t.text);
+
+  const today = todayStr();
+  checkedIds.forEach(id => { state[id] = { lastDone: today }; });
+  await saveState();
+
+  const doneItems = checkedIds.map(id => idToText[id]);
+  const dueItems = tasks
+    .filter(t => !checkedIds.includes(t.id))
+    .filter(t => {
+      const meta = GROUP_META[effectiveGroup(t)];
+      const last = state[t.id] ? state[t.id].lastDone : null;
+      return daysSince(last) >= meta.days;
+    })
+    .map(t => t.text);
+
+  const comments = commentsInput.value.trim();
+
+  history.push({ location, date: today, duration, comments, count: checkedIds.length });
+  await saveHistory();
+
+  await sendReportEmail(location, today, duration, doneItems, dueItems, comments);
+
+  checkedThisSession[location] = {};
+  finishedDurations[location] = null;
+  showToast(reportEmail ? ('Bedankt! Opgeslagen en rapport verstuurd naar ' + reportEmail) : 'Bedankt! Aftekening opgeslagen.');
+  renderView(location);
+}
+
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 3500);
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.tab + '-view').classList.add('active');
+  });
+});
+
+async function init() {
+  document.getElementById('date-label').textContent = new Date().toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  await loadAll();
+  renderView('huis');
+  renderView('kantoor');
+}
+init();
+</script>
+
+</body>
+</html>
