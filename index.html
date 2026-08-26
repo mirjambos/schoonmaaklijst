@@ -320,7 +320,16 @@ async function refreshTimerDisplay(location) {
   }
 }
 
-function todayStr() { return new Date().toISOString().slice(0,10); }
+// Lokale datum als YYYY-MM-DD. Bewust NIET via toISOString().slice(0,10) -- dat rekent
+// om naar UTC en kan rond middernacht een dag verschuiven (bv. 00:30 's nachts in
+// Nederlandse zomertijd is dan nog "gisteren" in UTC).
+function localISO(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
+function todayStr() { return localISO(new Date()); }
 function daysSince(dateStr) {
   if (!dateStr) return Infinity;
   return Math.round((new Date(todayStr()) - new Date(dateStr)) / 86400000);
@@ -427,13 +436,60 @@ function renderView(location) {
       <button class="primary" onclick="signOff('${location}')">Aftekenen &amp; opslaan</button>
     </div>
     <div class="history">
+      <h3>Weekrapport — ${location === 'huis' ? 'Huis' : 'Kantoor'}</h3>
+      <div id="${location}-weekreport"></div>
+    </div>
+    <div class="history">
       <h3>Recente afmeldingen — ${location === 'huis' ? 'Huis' : 'Kantoor'}</h3>
       <div id="${location}-history"></div>
     </div>
   `;
   container.innerHTML = html;
+  renderWeekReport(location);
   renderHistory(location);
   refreshTimerDisplay(location);
+}
+
+// Maandag van de week waarin dateStr valt (YYYY-MM-DD), als sleutel om per week te groeperen.
+function getWeekStart(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const day = d.getDay(); // 0 = zondag
+  const diffToMonday = (day === 0 ? -6 : 1 - day);
+  d.setDate(d.getDate() + diffToMonday);
+  return localISO(d);
+}
+function formatWeekRangeNL(weekStartStr) {
+  const start = new Date(weekStartStr + 'T00:00:00');
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  const fmt = (d) => d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' });
+  return fmt(start) + ' – ' + fmt(end) + ' ' + end.getFullYear();
+}
+
+function renderWeekReport(location) {
+  const el = document.getElementById(location + '-weekreport');
+  if (!el) return;
+  const entries = history.filter(h => h.location === location);
+  if (entries.length === 0) { el.innerHTML = '<div class="history-item">Nog geen gegevens.</div>'; return; }
+
+  const weeks = {};
+  entries.forEach(e => {
+    const wk = getWeekStart(e.date);
+    if (!weeks[wk]) weeks[wk] = { count: 0, duration: 0, days: 0, hasDuration: false };
+    weeks[wk].count += e.count;
+    if (e.duration) { weeks[wk].duration += e.duration; weeks[wk].hasDuration = true; }
+    weeks[wk].days += 1;
+  });
+
+  const weekKeys = Object.keys(weeks).sort().reverse().slice(0, 12);
+  el.innerHTML = weekKeys.map(wk => {
+    const w = weeks[wk];
+    return `
+      <div class="history-item">
+        <div class="h-top"><span>${formatWeekRangeNL(wk)}</span><span>${w.hasDuration ? formatDuration(w.duration) : '—'}</span></div>
+        <div>${w.count} taken afgevinkt over ${w.days} dag${w.days === 1 ? '' : 'en'}</div>
+      </div>`;
+  }).join('');
 }
 
 function renderHistory(location) {
