@@ -78,6 +78,7 @@
   <div class="titles">
     <h1>Schoonmaaklijst</h1>
     <p id="date-label">Laden...</p>
+    <p id="sync-status" style="margin:2px 0 0 0;font-size:11px;"></p>
   </div>
   <button id="admin-toggle" onclick="toggleAdmin()">Beheer</button>
 </header>
@@ -94,7 +95,42 @@
 
 <div id="toast" class="toast"></div>
 
+<!-- Firebase Realtime Database: gedeelde opslag zodat aftekeningen op elk apparaat
+     (bv. de telefoon van Fenna) ook bij jou zichtbaar worden, i.p.v. alleen lokaal
+     in de browser van dat ene apparaat te blijven staan. -->
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+
 <script>
+// Eigen pad ("schoonmaaklijst") binnen het al bestaande Firebase-project
+// mcb-paklijst-2026, zodat dit los blijft van de paklijst-app-data die daar ook
+// in staat. fbRoot blijft null als de Firebase-SDK niet geladen kon worden (bv.
+// geen internet) -- de app valt dan terug op alleen-lokale opslag (localStorage),
+// precies zoals vóór deze koppeling.
+let fbRoot = null;
+try {
+  const firebaseConfig = {
+    apiKey: "AIzaSyAvYgPHDIrUUkIPsMfNEWojgzCBO9pfXr8",
+    authDomain: "mcb-paklijst-2026.firebaseapp.com",
+    databaseURL: "https://mcb-paklijst-2026-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "mcb-paklijst-2026",
+    storageBucket: "mcb-paklijst-2026.firebasestorage.app",
+    messagingSenderId: "373547248244",
+    appId: "1:373547248244:web:0f6c930429328f5d98ff21"
+  };
+  firebase.initializeApp(firebaseConfig);
+  fbRoot = firebase.database().ref('schoonmaaklijst');
+} catch (e) {
+  console.error('Firebase kon niet geladen worden, app werkt alleen lokaal op dit apparaat.', e);
+}
+
+function setSyncStatus(text, ok) {
+  const el = document.getElementById('sync-status');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = ok ? '#8fd6ab' : 'var(--pink)';
+}
+
 const GROUP_META = {
   w:  { title: "Wekelijks", days: 7 },
   "2w": { title: "Tweewekelijks", days: 14 },
@@ -189,11 +225,13 @@ function getEffectiveTasks(location) {
 }
 function saveEffectiveTasks(location, tasks) {
   lsSet("tasks_" + location, JSON.stringify(tasks));
+  if (fbRoot) { fbRoot.child('tasks_' + location).set(tasks).catch(e => console.error(e)); }
 }
 function resetTasks(location) {
   const label = location === "huis" ? "Huis" : "Kantoor";
   if (!window.confirm('Standaardlijst herstellen voor ' + label + '? Eigen aanpassingen en toevoegingen gaan dan verloren.')) return;
   lsDelete("tasks_" + location);
+  if (fbRoot) { fbRoot.child('tasks_' + location).remove().catch(e => console.error(e)); }
   renderView(location);
   showToast('Standaardlijst hersteld voor ' + label + '.');
 }
@@ -254,8 +292,13 @@ async function getTimerData(location) {
   } catch (e) { return { startedAt: null, accumulated: 0 }; }
 }
 async function setTimerData(location, data) {
-  if (!data.startedAt && !data.accumulated) { lsDelete('timer_' + location); }
-  else { lsSet('timer_' + location, JSON.stringify(data)); }
+  if (!data.startedAt && !data.accumulated) {
+    lsDelete('timer_' + location);
+    if (fbRoot) { try { await fbRoot.child('timer_' + location).remove(); } catch (e) { console.error(e); } }
+  } else {
+    lsSet('timer_' + location, JSON.stringify(data));
+    if (fbRoot) { try { await fbRoot.child('timer_' + location).set(data); } catch (e) { console.error(e); } }
+  }
 }
 
 async function startTimer(location) {
@@ -345,11 +388,48 @@ function escapeHtml(str) {
 }
 
 async function loadAll() {
+  // Snelle eerste render vanuit de lokale cache, terwijl Firebase (indien beschikbaar) nog laadt.
   try { const raw = lsGet('tasks_state'); state = raw ? JSON.parse(raw) : {}; } catch (e) { state = {}; }
   try { const raw = lsGet('signoff_history'); history = raw ? JSON.parse(raw) : []; } catch (e) { history = []; }
+
+  if (!fbRoot) { setSyncStatus('Alleen lokaal (geen Firebase-verbinding)', false); return; }
+
+  firebase.database().ref('.info/connected').on('value', (snap) => {
+    setSyncStatus(snap.val() === true ? 'Gesynchroniseerd' : 'Verbinden…', snap.val() === true);
+  });
+
+  // Eén gedeelde listener op de hele boom: zodra er ergens iets verandert (op dit
+  // apparaat of een ander, bv. Fenna's telefoon), komt de verse data hier binnen en
+  // wordt alles herbouwd -- zo zien alle apparaten altijd hetzelfde.
+  fbRoot.on('value', (snapshot) => {
+    const data = snapshot.val() || {};
+    state = data.state || {};
+    history = data.history ? Object.keys(data.history).sort().map(k => data.history[k]) : [];
+
+    lsSet('tasks_state', JSON.stringify(state));
+    lsSet('signoff_history', JSON.stringify(history));
+    ['huis', 'kantoor'].forEach(loc => {
+      if (data['tasks_' + loc]) { lsSet('tasks_' + loc, JSON.stringify(data['tasks_' + loc])); }
+      else { lsDelete('tasks_' + loc); }
+      if (data['timer_' + loc]) { lsSet('timer_' + loc, JSON.stringify(data['timer_' + loc])); }
+      else { lsDelete('timer_' + loc); }
+    });
+
+    renderView('huis');
+    renderView('kantoor');
+  }, (err) => {
+    console.error('Firebase-listener fout, val terug op lokale opslag.', err);
+    setSyncStatus('Alleen lokaal (verbinding mislukt)', false);
+  });
 }
-async function saveState() { lsSet('tasks_state', JSON.stringify(state)); }
-async function saveHistory() { lsSet('signoff_history', JSON.stringify(history)); }
+async function saveState() {
+  lsSet('tasks_state', JSON.stringify(state));
+  if (fbRoot) { try { await fbRoot.child('state').set(state); } catch (e) { console.error(e); } }
+}
+async function saveHistory(newEntry) {
+  lsSet('signoff_history', JSON.stringify(history));
+  if (fbRoot && newEntry) { try { await fbRoot.child('history').push(newEntry); } catch (e) { console.error(e); } }
+}
 
 function toggleAdmin() {
   adminMode = !adminMode;
@@ -532,8 +612,9 @@ async function signOff(location) {
   const doneItems = checkedIds.map(id => idToText[id]);
   const comments = commentsInput.value.trim();
 
-  history.push({ location, date: today, duration, comments, count: checkedIds.length, done: doneItems });
-  await saveHistory();
+  const entry = { location, date: today, duration, comments, count: checkedIds.length, done: doneItems };
+  history.push(entry);
+  await saveHistory(entry);
 
   checkedThisSession[location] = {};
   finishedDurations[location] = null;
