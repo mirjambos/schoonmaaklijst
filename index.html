@@ -21,10 +21,6 @@
   header .titles p { margin: 0; font-size: 13px; color: var(--pink); }
   #admin-toggle { background: transparent; border: 1px solid var(--pink); color: var(--pink); border-radius: 6px; padding: 6px 10px; font-size: 12px; cursor: pointer; }
   #admin-toggle.on { background: var(--pink); color: var(--brown); }
-  .admin-bar { background: #f6ecec; border-bottom: 1px solid var(--border); padding: 10px 16px; display: none; }
-  .admin-bar.show { display: block; }
-  .admin-bar label { font-size: 12px; color: var(--gray); display: block; margin-bottom: 4px; }
-  .admin-bar input { width: 100%; max-width: 360px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
   .tabs { display: flex; background: #fff; border-bottom: 2px solid var(--border); position: sticky; top: 0; z-index: 10; }
   .tab { flex: 1; padding: 14px; text-align: center; font-weight: 700; font-size: 14px; color: var(--gray); cursor: pointer; border-bottom: 3px solid transparent; }
   .tab.active { color: var(--brown); border-bottom: 3px solid var(--pink); }
@@ -54,6 +50,8 @@
   .history h3 { font-size: 14px; color: var(--gray); margin-bottom: 8px; }
   .history-item { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px; }
   .history-item .h-top { display: flex; justify-content: space-between; font-weight: 700; }
+  .history-item .h-done-list { margin: 6px 0 0 0; padding-left: 18px; }
+  .history-item .h-done-list li { margin-bottom: 2px; }
 
   .timer-box { display: flex; align-items: center; justify-content: space-between; background: #f6ecec; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; }
   .timer-display { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -83,11 +81,6 @@
   </div>
   <button id="admin-toggle" onclick="toggleAdmin()">Beheer</button>
 </header>
-
-<div class="admin-bar" id="admin-bar">
-  <label>E-mailadres voor rapport (verstuurd zodra iemand aftekent)</label>
-  <input type="email" id="report-email" placeholder="naam@voorbeeld.nl" onchange="saveRecipient()">
-</div>
 
 <div class="tabs">
   <div class="tab active" data-tab="huis">Huis</div>
@@ -166,7 +159,6 @@ let state = {};        // taskId -> { lastDone: 'YYYY-MM-DD' }
 let history = [];      // array of records
 let checkedThisSession = { huis: {}, kantoor: {} };
 let adminMode = false;
-let reportEmail = "";
 let timerIntervals = { huis: null, kantoor: null };
 let finishedDurations = { huis: null, kantoor: null };
 
@@ -346,21 +338,13 @@ function escapeHtml(str) {
 async function loadAll() {
   try { const raw = lsGet('tasks_state'); state = raw ? JSON.parse(raw) : {}; } catch (e) { state = {}; }
   try { const raw = lsGet('signoff_history'); history = raw ? JSON.parse(raw) : []; } catch (e) { history = []; }
-  try { reportEmail = lsGet('report_email') || ""; } catch (e) { reportEmail = ""; }
-  document.getElementById('report-email').value = reportEmail;
 }
 async function saveState() { lsSet('tasks_state', JSON.stringify(state)); }
 async function saveHistory() { lsSet('signoff_history', JSON.stringify(history)); }
-async function saveRecipient() {
-  reportEmail = document.getElementById('report-email').value.trim();
-  lsSet('report_email', reportEmail);
-  showToast('E-mailadres opgeslagen.');
-}
 
 function toggleAdmin() {
   adminMode = !adminMode;
   document.getElementById('admin-toggle').classList.toggle('on', adminMode);
-  document.getElementById('admin-bar').classList.toggle('show', adminMode);
   renderView('huis');
   renderView('kantoor');
 }
@@ -460,6 +444,7 @@ function renderHistory(location) {
     <div class="history-item">
       <div class="h-top"><span>${formatDateNL(e.date)}</span><span>${e.duration ? formatDuration(e.duration) : ''}</span></div>
       <div>${e.count} taken afgevinkt</div>
+      ${e.done && e.done.length ? `<ul class="h-done-list">${e.done.map(t => `<li>${escapeHtml(t)}</li>`).join('')}</ul>` : ''}
       ${e.comments ? `<div class="h-comment">"${escapeHtml(e.comments)}"</div>` : ''}
     </div>
   `).join('');
@@ -467,28 +452,6 @@ function renderHistory(location) {
 
 function toggleTask(location, id) {
   checkedThisSession[location][id] = document.getElementById(id).checked;
-}
-
-function buildReportText(location, date, duration, doneItems, dueItems, comments) {
-  const label = location === 'huis' ? 'Huis' : 'Kantoor';
-  let lines = [];
-  lines.push(`Schoonmaakrapport - ${label}`);
-  lines.push(`Datum: ${date}`);
-  if (duration) lines.push(`Tijd besteed: ${formatDuration(duration)}`);
-  lines.push('');
-  lines.push(`Afgevinkt vandaag (${doneItems.length}):`);
-  doneItems.forEach(t => lines.push('- ' + t));
-  lines.push('');
-  if (dueItems.length > 0) {
-    lines.push(`Nog openstaand / te doen (${dueItems.length}):`);
-    dueItems.forEach(t => lines.push('- ' + t));
-    lines.push('');
-  }
-  if (comments) {
-    lines.push('Opmerkingen van de schoonmaker:');
-    lines.push(comments);
-  }
-  return lines.join('\n');
 }
 
 async function signOff(location) {
@@ -511,23 +474,14 @@ async function signOff(location) {
   await saveState();
 
   const doneItems = checkedIds.map(id => idToText[id]);
-  const dueItems = tasks
-    .filter(t => !checkedIds.includes(t.id))
-    .filter(t => {
-      const meta = GROUP_META[t.group];
-      const last = state[t.id] ? state[t.id].lastDone : null;
-      return daysSince(last) >= meta.days;
-    })
-    .map(t => t.text);
-
   const comments = commentsInput.value.trim();
 
-  history.push({ location, date: today, duration, comments, count: checkedIds.length });
+  history.push({ location, date: today, duration, comments, count: checkedIds.length, done: doneItems });
   await saveHistory();
 
   checkedThisSession[location] = {};
   finishedDurations[location] = null;
-  showToast(reportEmail ? ('Bedankt! Opgeslagen (e-mailrapport is nog niet actief).') : 'Bedankt! Aftekening opgeslagen.');
+  showToast('Bedankt! Aftekening opgeslagen.');
   renderView(location);
 }
 
