@@ -70,6 +70,12 @@
   .reset-link { background: none; border: none; color: var(--gray); font-size: 11px; text-decoration: underline; cursor: pointer; padding: 0; }
   .admin-task-actions { display: flex; gap: 6px; margin-left: 6px; flex-shrink: 0; }
   .admin-task-actions button { background: none; border: 1px solid var(--border); border-radius: 6px; padding: 4px 7px; font-size: 12px; cursor: pointer; line-height: 1; }
+
+  .once-library { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+  .once-lib-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
+  .once-lib-item input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--pink-dark); flex-shrink: 0; }
+  .once-lib-item span { flex: 1; }
+  .once-lib-item button { background: none; border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; font-size: 11px; cursor: pointer; flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -386,6 +392,73 @@ function escapeHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+// Voor gebruik in een enkel-aangehaalde JS-stringliteral binnen een dubbel-aangehaald
+// HTML-attribuut (bv. onclick="fn('...')") -- anders breekt een apostrof in de
+// werkzaamheidstekst de hele handler stilletjes af.
+function jsStr(str) {
+  return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+// Eenmalige taken: verdwijnen na afvinken (geen terugkerende frequentie/laatst-gedaan),
+// maar blijven als tekst bewaard in een "bibliotheek" zodat ze later opnieuw geactiveerd
+// kunnen worden zonder ze opnieuw te hoeven intypen.
+function getOneTimeLibrary(location) {
+  const raw = lsGet('oneTimeLibrary_' + location);
+  if (!raw) return [];
+  try { return JSON.parse(raw); } catch (e) { return []; }
+}
+function saveOneTimeLibrary(location, list) {
+  lsSet('oneTimeLibrary_' + location, JSON.stringify(list));
+  if (fbRoot) { fbRoot.child('oneTimeLibrary_' + location).set(list).catch(e => console.error(e)); }
+}
+function getActiveOneTime(location) {
+  const raw = lsGet('oneTimeActive_' + location);
+  if (!raw) return [];
+  try { return JSON.parse(raw); } catch (e) { return []; }
+}
+function saveActiveOneTime(location, list) {
+  lsSet('oneTimeActive_' + location, JSON.stringify(list));
+  if (fbRoot) { fbRoot.child('oneTimeActive_' + location).set(list).catch(e => console.error(e)); }
+}
+
+function addOneTimeLibraryItem(location) {
+  const input = document.getElementById(location + '-new-once-text');
+  const text = input.value.trim();
+  if (!text) { showToast('Vul eerst een omschrijving in.'); return; }
+  const library = getOneTimeLibrary(location);
+  if (!library.includes(text)) { library.push(text); saveOneTimeLibrary(location, library); }
+  const active = getActiveOneTime(location);
+  if (!active.some(t => t.text === text)) {
+    const id = 'once-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    active.push({ id, text });
+    saveActiveOneTime(location, active);
+  }
+  input.value = '';
+  renderView(location);
+  showToast('Eenmalige taak toegevoegd.');
+}
+
+function toggleOneTimeActive(location, text, isChecked) {
+  const active = getActiveOneTime(location);
+  if (isChecked) {
+    if (!active.some(t => t.text === text)) {
+      const id = 'once-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      active.push({ id, text });
+      saveActiveOneTime(location, active);
+    }
+  } else {
+    saveActiveOneTime(location, active.filter(t => t.text !== text));
+  }
+  renderView(location);
+}
+
+function deleteOneTimeLibraryItem(location, text) {
+  if (!window.confirm('Dit item permanent verwijderen uit de bibliotheek: "' + text + '"?')) return;
+  saveOneTimeLibrary(location, getOneTimeLibrary(location).filter(t => t !== text));
+  saveActiveOneTime(location, getActiveOneTime(location).filter(t => t.text !== text));
+  renderView(location);
+  showToast('Verwijderd uit bibliotheek.');
+}
 
 async function loadAll() {
   // Snelle eerste render vanuit de lokale cache, terwijl Firebase (indien beschikbaar) nog laadt.
@@ -413,6 +486,10 @@ async function loadAll() {
       else { lsDelete('tasks_' + loc); }
       if (data['timer_' + loc]) { lsSet('timer_' + loc, JSON.stringify(data['timer_' + loc])); }
       else { lsDelete('timer_' + loc); }
+      if (data['oneTimeLibrary_' + loc]) { lsSet('oneTimeLibrary_' + loc, JSON.stringify(data['oneTimeLibrary_' + loc])); }
+      else { lsDelete('oneTimeLibrary_' + loc); }
+      if (data['oneTimeActive_' + loc]) { lsSet('oneTimeActive_' + loc, JSON.stringify(data['oneTimeActive_' + loc])); }
+      else { lsDelete('oneTimeActive_' + loc); }
     });
 
     renderView('huis');
@@ -465,6 +542,37 @@ function renderView(location) {
         </div>
         <button type="button" class="reset-link" onclick="resetTasks('${location}')">Standaardlijst herstellen</button>
       </div>`;
+
+    const onceLibrary = getOneTimeLibrary(location);
+    const onceActiveTexts = getActiveOneTime(location).map(t => t.text);
+    html += `
+      <div class="admin-add-task">
+        <div class="admin-add-title">Eenmalige taken</div>
+        <input type="text" id="${location}-new-once-text" placeholder="Nieuwe eenmalige taak (bv. filters afzuigkap reinigen)...">
+        <div class="admin-add-row">
+          <button type="button" onclick="addOneTimeLibraryItem('${location}')" style="flex:1;">+ Toevoegen &amp; op de lijst zetten</button>
+        </div>
+        ${onceLibrary.length ? `<div class="once-library">` + onceLibrary.map(text => `
+          <div class="once-lib-item">
+            <input type="checkbox" ${onceActiveTexts.includes(text) ? 'checked' : ''} onchange="toggleOneTimeActive('${location}','${jsStr(text)}', this.checked)">
+            <span>${escapeHtml(text)}</span>
+            <button type="button" onclick="deleteOneTimeLibraryItem('${location}','${jsStr(text)}')">&#128465;</button>
+          </div>`).join('') + `</div>` : '<div style="font-size:12px;color:var(--gray);">Nog geen eenmalige taken bekend.</div>'}
+      </div>`;
+  }
+
+  const activeOnce = getActiveOneTime(location);
+  if (activeOnce.length > 0) {
+    html += `<div class="group"><div class="group-header"><span>Eenmalig</span><span class="freq-note">verdwijnt na afvinken</span></div>`;
+    activeOnce.forEach(task => {
+      const checked = checkedThisSession[location][task.id] ? 'checked' : '';
+      html += `
+        <div class="task">
+          <input type="checkbox" id="${task.id}" ${checked} onchange="toggleTask('${location}','${task.id}')">
+          <label for="${task.id}">${escapeHtml(task.text)}</label>
+        </div>`;
+    });
+    html += `</div>`;
   }
 
   GROUP_ORDER.forEach(groupId => {
@@ -605,16 +713,28 @@ async function signOff(location) {
   const idToText = {};
   tasks.forEach(t => idToText[t.id] = t.text);
 
+  // Eenmalige taken hebben geen terugkerende frequentie/laatst-gedaan -- apart bijhouden
+  // zodat ze straks uit de actieve lijst verdwijnen i.p.v. in `state` terecht te komen.
+  const onceTasks = getActiveOneTime(location);
+  const onceIdSet = new Set(onceTasks.map(t => t.id));
+  onceTasks.forEach(t => idToText[t.id] = t.text);
+
   const today = todayStr();
-  checkedIds.forEach(id => { state[id] = { lastDone: today }; });
+  const recurringCheckedIds = checkedIds.filter(id => !onceIdSet.has(id));
+  recurringCheckedIds.forEach(id => { state[id] = { lastDone: today }; });
   await saveState();
 
-  const doneItems = checkedIds.map(id => idToText[id]);
+  const doneItems = checkedIds.map(id => idToText[id]).filter(Boolean);
   const comments = commentsInput.value.trim();
 
   const entry = { location, date: today, duration, comments, count: checkedIds.length, done: doneItems };
   history.push(entry);
   await saveHistory(entry);
+
+  const checkedOnceIds = checkedIds.filter(id => onceIdSet.has(id));
+  if (checkedOnceIds.length > 0) {
+    saveActiveOneTime(location, onceTasks.filter(t => !checkedOnceIds.includes(t.id)));
+  }
 
   checkedThisSession[location] = {};
   finishedDurations[location] = null;
