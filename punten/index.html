@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#2D2827">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Kamerpunten">
+<title>Kamerpunten</title>
+<style>
+  :root {
+    --brown: #2D2827;
+    --pink: #E0A2A2;
+    --pink-dark: #c98080;
+    --light: #FBF6F6;
+    --gray: #8a8382;
+    --red: #b5504a;
+    --green: #5c9a6e;
+    --gold: #c99a3e;
+    --border: #e8dede;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; font-family: Arial, "Open Sans", sans-serif; background: var(--light); color: var(--brown); padding-bottom: env(safe-area-inset-bottom); }
+  header { background: var(--brown); color: var(--light); padding: 18px 16px; }
+  header .top-row { display: flex; justify-content: space-between; align-items: flex-start; }
+  header .titles h1 { margin: 0 0 4px 0; font-size: 20px; font-weight: 700; }
+  header .titles p { margin: 0; font-size: 13px; color: var(--pink); }
+  #sync-status { margin: 2px 0 0 0; font-size: 11px; }
+
+  .wallet-strip { display: flex; gap: 10px; margin-top: 14px; }
+  .wallet-card { flex: 1; background: rgba(255,255,255,0.08); border-radius: 10px; padding: 10px 12px; text-align: center; }
+  .wallet-card .num { font-size: 20px; font-weight: 700; }
+  .wallet-card .lbl { font-size: 10px; color: var(--pink); text-transform: uppercase; letter-spacing: 0.03em; }
+  .rank-line { margin-top: 8px; font-size: 12px; color: var(--pink); text-align: center; }
+
+  .tabs { display: flex; background: #fff; border-bottom: 2px solid var(--border); position: sticky; top: 0; z-index: 10; overflow-x: auto; }
+  .tab { flex: 1; padding: 13px 6px; text-align: center; font-weight: 700; font-size: 13px; color: var(--gray); cursor: pointer; border-bottom: 3px solid transparent; white-space: nowrap; }
+  .tab.active { color: var(--brown); border-bottom: 3px solid var(--pink); }
+  .container { max-width: 640px; margin: 0 auto; padding: 16px; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .room-card { background: #fff; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 16px; overflow: hidden; }
+  .room-header { padding: 12px 16px; background: #f6ecec; display: flex; justify-content: space-between; align-items: center; }
+  .room-header .room-name { font-weight: 700; font-size: 15px; }
+  .room-header .room-progress { font-size: 11px; color: var(--gray); }
+  .today-task { padding: 16px; }
+  .today-task .zone-chip { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; background: var(--pink); color: var(--brown); padding: 2px 8px; border-radius: 8px; margin-bottom: 8px; }
+  .today-task .task-text { font-size: 16px; line-height: 1.4; margin-bottom: 12px; }
+  .today-task .points-tag { font-size: 12px; color: var(--gold); font-weight: 700; margin-bottom: 12px; }
+  .done-btn { width: 100%; padding: 13px; background: var(--brown); color: #fff; border: none; border-radius: 8px; font-size: 14.5px; font-weight: 700; cursor: pointer; }
+  .done-btn:active { background: var(--pink-dark); }
+  .all-done-msg { padding: 20px 16px; text-align: center; color: var(--green); font-weight: 700; font-size: 14px; }
+  .no-rooms-msg { text-align: center; padding: 40px 16px; color: var(--gray); font-size: 14px; }
+
+  .notif-banner { background: #fff; border: 1px dashed var(--pink-dark); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: 13px; }
+  .notif-banner button { margin-top: 8px; background: var(--brown); color: #fff; border: none; border-radius: 6px; padding: 8px 14px; font-size: 13px; font-weight: 700; cursor: pointer; }
+
+  .reward-card { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .reward-card .reward-name { font-size: 14px; font-weight: 700; }
+  .reward-card .reward-cost { font-size: 12px; color: var(--gold); font-weight: 700; }
+  .reward-card button { background: var(--pink-dark); color: #fff; border: none; border-radius: 6px; padding: 8px 12px; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+  .reward-card button:disabled { background: #ccc; cursor: not-allowed; }
+
+  .history-item { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px; }
+  .history-item .h-top { display: flex; justify-content: space-between; font-weight: 700; }
+  .history-item.bonus { border-color: var(--gold); }
+  .history-item.redemption { border-color: var(--red); }
+  .history-item .h-points { font-weight: 700; }
+  .history-item .h-points.neg { color: var(--red); }
+  .history-item .h-points.pos { color: var(--green); }
+
+  .admin-section { background: #fff; border-radius: 10px; border: 1px solid var(--border); padding: 14px; margin-bottom: 16px; }
+  .admin-section h3 { margin: 0 0 10px 0; font-size: 14px; }
+  .admin-section input, .admin-section select { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; margin-bottom: 8px; font-family: inherit; }
+  .admin-row { display: flex; gap: 8px; }
+  .admin-row > * { flex: 1; }
+  .admin-add-btn { background: var(--brown); color: #fff; border: none; border-radius: 6px; padding: 9px 14px; font-size: 13px; font-weight: 700; cursor: pointer; width: 100%; }
+  .admin-task-row { display: flex; align-items: center; gap: 6px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
+  .admin-task-row .t-text { flex: 1; }
+  .admin-task-row .t-zone { color: var(--gray); font-size: 11px; }
+  .admin-task-row .t-points { color: var(--gold); font-weight: 700; font-size: 12px; white-space: nowrap; }
+  .admin-task-row button { background: none; border: 1px solid var(--border); border-radius: 6px; padding: 4px 7px; font-size: 12px; cursor: pointer; }
+  .admin-task-row .cursor-mark { font-size: 14px; }
+  .admin-room-block { border-top: 2px solid var(--border); padding-top: 10px; margin-top: 10px; }
+  .admin-room-block:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+  .admin-room-title-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .admin-room-title-row .room-title { font-weight: 700; font-size: 14px; }
+  .admin-room-title-row button { background: none; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 11px; cursor: pointer; }
+  .inactive-note { color: var(--gray); font-style: italic; }
+
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--brown); color: #fff; padding: 12px 18px; border-radius: 8px; font-size: 14px; opacity: 0; transition: opacity 0.3s; pointer-events: none; max-width: 90%; text-align: center; z-index: 100; }
+  .toast.show { opacity: 1; }
+  .toast.celebrate { background: var(--green); }
+
+  .confetti-piece { position: fixed; top: -10px; width: 8px; height: 14px; opacity: 0.9; z-index: 200; pointer-events: none; border-radius: 2px; animation: confetti-fall linear forwards; }
+  @keyframes confetti-fall {
+    to { transform: translateY(110vh) rotate(540deg); opacity: 0.2; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="top-row">
+    <div class="titles">
+      <h1>Kamerpunten</h1>
+      <p id="date-label">Laden...</p>
+      <p id="sync-status"></p>
+    </div>
+  </div>
+  <div class="wallet-strip">
+    <div class="wallet-card"><div class="num" id="wallet-balance">0</div><div class="lbl">Punten</div></div>
+    <div class="wallet-card"><div class="num" id="wallet-streak">0</div><div class="lbl">Reeks (dagen)</div></div>
+    <div class="wallet-card"><div class="num" id="wallet-lifetime">0</div><div class="lbl">Ooit verdiend</div></div>
+  </div>
+  <div class="rank-line" id="rank-line"></div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-tab="vandaag">Vandaag</div>
+  <div class="tab" data-tab="beloningen">Beloningen</div>
+  <div class="tab" data-tab="geschiedenis">Geschiedenis</div>
+  <div class="tab" data-tab="beheer">Beheer</div>
+</div>
+
+<div class="container">
+  <div id="vandaag-view" class="view active"><div style="text-align:center;padding:40px;color:#8a8382;">Bezig met laden...</div></div>
+  <div id="beloningen-view" class="view"></div>
+  <div id="geschiedenis-view" class="view"></div>
+  <div id="beheer-view" class="view"></div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js"></script>
+
+<script>
+// Zelfde Firebase-project als de schoonmaaklijst-app (mcb-paklijst-2026), maar met
+// een eigen pad ("puntenapp") zodat de data volledig gescheiden blijft.
+const VAPID_KEY = ""; // vul hier je eigen VAPID-sleutel in (zie README.md) om echte pushmeldingen te activeren
+
+let fbRoot = null;
+let messaging = null;
+try {
+  const firebaseConfig = {
+    apiKey: "AIzaSyAvYgPHDIrUUkIPsMfNEWojgzCBO9pfXr8",
+    authDomain: "mcb-paklijst-2026.firebaseapp.com",
+    databaseURL: "https://mcb-paklijst-2026-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "mcb-paklijst-2026",
+    storageBucket: "mcb-paklijst-2026.firebasestorage.app",
+    messagingSenderId: "373547248244",
+    appId: "1:373547248244:web:0f6c930429328f5d98ff21"
+  };
+  firebase.initializeApp(firebaseConfig);
+  fbRoot = firebase.database().ref('puntenapp');
+  if (firebase.messaging.isSupported()) {
+    messaging = firebase.messaging();
+    // Als de app al open staat, toont de browser zelf geen systeemmelding voor een
+    // data-only bericht -- laat in dat geval gewoon de gebruikelijke in-app toast zien.
+    messaging.onMessage((payload) => {
+      const body = (payload.data && payload.data.body) || 'Vandaag staat er weer een taakje klaar.';
+      showToast(body);
+    });
+  }
+} catch (e) {
+  console.error('Firebase kon niet geladen worden, app werkt alleen lokaal op dit apparaat.', e);
+}
+
+function setSyncStatus(text, ok) {
+  const el = document.getElementById('sync-status');
+  if (!el) return;
+  el.textContent = text;
+  el.style.color = ok ? '#8fd6ab' : 'var(--pink)';
+}
+
+const LS_PREFIX = "kamerpunten_";
+function lsGet(key) { try { return localStorage.getItem(LS_PREFIX + key); } catch (e) { return null; } }
+function lsSet(key, value) { try { localStorage.setItem(LS_PREFIX + key, value); } catch (e) { console.error(e); } }
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : str;
+  return div.innerHTML;
+}
+function jsStr(str) {
+  return String(str == null ? '' : str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+function localISO(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
+function todayStr() { return localISO(new Date()); }
+function yesterdayStr() { const d = new Date(); d.setDate(d.getDate() - 1); return localISO(d); }
+function formatDateNL(dateStr) {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+function newId(prefix) { return prefix + '-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+// Standaard startdata -- alleen gebruikt zolang er nog niets in Firebase/localStorage
+// staat. Daarna is alles vrij te bewerken via Beheer; deze lijst overschrijft nooit
+// bestaande data.
+function defaultRooms() {
+  const bedTasks = [
+    { id: 'sk-bed', text: 'Bed opmaken en kussens opschudden', zone: 'Bed', points: 3, active: true },
+    { id: 'sk-nachtkastje', text: 'Nachtkastje leegruimen en afnemen', zone: 'Nachtkastje', points: 5, active: true },
+    { id: 'sk-kleren', text: 'Losliggende kleren opruimen of ophangen', zone: 'Vloer', points: 5, active: true },
+    { id: 'sk-ladekast', text: 'Stof afnemen op de ladekast', zone: 'Ladekast', points: 5, active: true },
+    { id: 'sk-prullenbak', text: 'Prullenbak legen', zone: 'Prullenbak', points: 3, active: true },
+    { id: 'sk-vloer', text: 'Een klein stukje vloer stofzuigen of vegen', zone: 'Vloer', points: 8, active: true },
+    { id: 'sk-raam', text: 'Vensterbank en kozijn afnemen', zone: 'Raam', points: 5, active: true },
+    { id: 'sk-kastplank', text: 'Eén plank in de kast opruimen', zone: 'Kast', points: 10, active: true },
+    { id: 'sk-onderbed', text: 'Onder het bed opruimen of stofzuigen', zone: 'Onder bed', points: 10, active: true },
+    { id: 'sk-hoeken', text: 'Spinnenwebben en stof in de hoeken wegvegen', zone: 'Hoeken', points: 5, active: true }
+  ];
+  const zolderTasks = [
+    { id: 'zk-doos', text: 'Eén doos of stapel uitzoeken en opruimen', zone: 'Dozen', points: 15, active: true },
+    { id: 'zk-vloer', text: 'Een klein stukje vloer vrijmaken en stofzuigen', zone: 'Vloer', points: 10, active: true },
+    { id: 'zk-plank', text: 'Eén plank of kastje opruimen', zone: 'Kast', points: 10, active: true },
+    { id: 'zk-stof', text: 'Stof afnemen op een oppervlak', zone: 'Oppervlaktes', points: 5, active: true },
+    { id: 'zk-kleding', text: 'Klein stapeltje kleding sorteren: bewaren, weggeven of weg', zone: 'Kleding', points: 10, active: true },
+    { id: 'zk-hoeken', text: 'Spinnenwebben en stof in de hoeken wegvegen', zone: 'Hoeken', points: 5, active: true },
+    { id: 'zk-raam', text: 'Raam en vensterbank afnemen', zone: 'Raam', points: 5, active: true },
+    { id: 'zk-spullen', text: 'Losse spullen een vaste plek geven', zone: 'Algemeen', points: 8, active: true }
+  ];
+  const toMap = (arr) => { const m = {}; arr.forEach(t => { m[t.id] = t; }); return m; };
+  return {
+    'slaapkamer': { name: 'Slaapkamer', order: 0, active: true, cursor: 0, taskOrder: bedTasks.map(t => t.id), tasks: toMap(bedTasks) },
+    'zolderkamer': { name: 'Zolderkamer', order: 1, active: true, cursor: 0, taskOrder: zolderTasks.map(t => t.id), tasks: toMap(zolderTasks) }
+  };
+}
+function defaultRewards() {
+  return {
+    'r-boek': { name: 'Nieuw boek (voorbeeld, pas aan!)', cost: 150, archived: false },
+    'r-uiteten': { name: 'Avondje uit eten', cost: 400, archived: false },
+    'r-vrij': { name: 'Iets leuks voor mezelf (max. €25, vrij te kiezen)', cost: 250, archived: false },
+    'r-niksen': { name: 'Middagje niksen zonder schuldgevoel', cost: 100, archived: false }
+  };
+}
+
+const MILESTONES = { 3: 10, 7: 25, 14: 50, 30: 100, 60: 200, 100: 400 };
+
+const RANKS = [
+  { min: 0, label: 'Stofmuis' },
+  { min: 50, label: 'Soppenridder' },
+  { min: 150, label: 'Vlekkenjager' },
+  { min: 300, label: 'Meester Zemer' },
+  { min: 600, label: 'Schoonmaak-generaal' },
+  { min: 1000, label: 'Huisheld' },
+  { min: 2000, label: 'Legende van de Lap' }
+];
+function rankFor(lifetime) {
+  let current = RANKS[0];
+  for (const r of RANKS) { if (lifetime >= r.min) current = r; }
+  const next = RANKS.find(r => r.min > lifetime);
+  return { label: current.label, next };
+}
+
+let rooms = {};
+let wallet = { balance: 0, lifetime: 0, streak: 0, bestStreak: 0, lastCompletedDate: null };
+let rewards = {};
+let history = [];
+let settings = { reminderHour: 8, reminderMinute: 0 };
+let adminMode = true; // geen wachtwoord nodig -- dit is een persoonlijke app voor eigen gebruik
+
+async function loadAll() {
+  try { rooms = JSON.parse(lsGet('rooms') || 'null') || defaultRooms(); } catch (e) { rooms = defaultRooms(); }
+  try { wallet = JSON.parse(lsGet('wallet') || 'null') || wallet; } catch (e) {}
+  try { rewards = JSON.parse(lsGet('rewards') || 'null') || defaultRewards(); } catch (e) { rewards = defaultRewards(); }
+  try { history = JSON.parse(lsGet('history') || '[]'); } catch (e) { history = []; }
+  try { settings = JSON.parse(lsGet('settings') || 'null') || settings; } catch (e) {}
+
+  renderAll();
+
+  if (!fbRoot) { setSyncStatus('Alleen lokaal (geen Firebase-verbinding)', false); return; }
+
+  firebase.database().ref('.info/connected').on('value', (snap) => {
+    setSyncStatus(snap.val() === true ? 'Gesynchroniseerd' : 'Verbinden…', snap.val() === true);
+  });
+
+  fbRoot.on('value', (snapshot) => {
+    const data = snapshot.val();
+    if (!data) {
+      // Eerste keer ooit: er staat nog niets in Firebase -- zet de standaardstartdata weg.
+      seedFirebase();
+      return;
+    }
+    rooms = data.rooms || defaultRooms();
+    wallet = data.wallet || wallet;
+    rewards = data.rewards || defaultRewards();
+    history = data.history ? Object.keys(data.history).sort().map(k => data.history[k]) : [];
+    settings = data.settings || settings;
+
+    lsSet('rooms', JSON.stringify(rooms));
+    lsSet('wallet', JSON.stringify(wallet));
+    lsSet('rewards', JSON.stringify(rewards));
+    lsSet('history', JSON.stringify(history));
+    lsSet('settings', JSON.stringify(settings));
+
+    renderAll();
+  }, (err) => {
+    console.error('Firebase-listener fout, val terug op lokale opslag.', err);
+    setSyncStatus('Alleen lokaal (verbinding mislukt)', false);
+  });
+}
+
+function seedFirebase() {
+  if (!fbRoot) return;
+  fbRoot.set({ rooms: defaultRooms(), wallet, rewards: defaultRewards(), settings }).catch(e => console.error(e));
+}
+
+async function saveRooms() {
+  lsSet('rooms', JSON.stringify(rooms));
+  if (fbRoot) { try { await fbRoot.child('rooms').set(rooms); } catch (e) { console.error(e); } }
+}
+async function saveWallet() {
+  lsSet('wallet', JSON.stringify(wallet));
+  if (fbRoot) { try { await fbRoot.child('wallet').set(wallet); } catch (e) { console.error(e); } }
+}
+async function saveRewards() {
+  lsSet('rewards', JSON.stringify(rewards));
+  if (fbRoot) { try { await fbRoot.child('rewards').set(rewards); } catch (e) { console.error(e); } }
+}
+async function saveSettings() {
+  lsSet('settings', JSON.stringify(settings));
+  if (fbRoot) { try { await fbRoot.child('settings').set(settings); } catch (e) { console.error(e); } }
+}
+async function pushHistory(entry) {
+  history.push(entry);
+  lsSet('history', JSON.stringify(history));
+  if (fbRoot) { try { await fbRoot.child('history').push(entry); } catch (e) { console.error(e); } }
+}
+
+// Vindt de eerstvolgende actieve taak vanaf `cursor` in de vaste volgorde van de kamer
+// (rondlopend), zodat elke taak op den duur een keer aan de beurt komt. Geeft null als
+// er geen enkele actieve taak in de kamer is.
+function findTodayTask(room) {
+  const order = room.taskOrder || [];
+  if (order.length === 0) return null;
+  for (let i = 0; i < order.length; i++) {
+    const idx = (room.cursor + i) % order.length;
+    const task = room.tasks[order[idx]];
+    if (task && task.active) return { task, idx };
+  }
+  return null;
+}
+
+function renderAll() {
+  renderWalletStrip();
+  renderVandaag();
+  renderBeloningen();
+  renderGeschiedenis();
+  renderBeheer();
+}
+
+function renderWalletStrip() {
+  document.getElementById('wallet-balance').textContent = wallet.balance || 0;
+  document.getElementById('wallet-streak').textContent = wallet.streak || 0;
+  document.getElementById('wallet-lifetime').textContent = wallet.lifetime || 0;
+  const rank = rankFor(wallet.lifetime || 0);
+  const rankEl = document.getElementById('rank-line');
+  rankEl.textContent = rank.next
+    ? rank.label + ' — nog ' + (rank.next.min - wallet.lifetime) + ' punten tot ' + rank.next.label
+    : rank.label + ' (hoogste rang!)';
+}
+
+function renderVandaag() {
+  const container = document.getElementById('vandaag-view');
+  let html = '';
+
+  if (messaging && VAPID_KEY && Notification.permission !== 'granted') {
+    html += `
+      <div class="notif-banner">
+        Zet dagelijkse herinneringen aan zodat je een pushmelding krijgt op je telefoon.
+        <div><button type="button" onclick="enableNotifications()">Meldingen aanzetten</button></div>
+      </div>`;
+  } else if (!VAPID_KEY) {
+    html += `
+      <div class="notif-banner">
+        Pushmeldingen zijn nog niet ingesteld (VAPID-sleutel ontbreekt). Zie README.md voor de laatste installatiestap.
+      </div>`;
+  }
+
+  const roomIds = Object.keys(rooms).sort((a, b) => (rooms[a].order || 0) - (rooms[b].order || 0));
+  const activeRoomIds = roomIds.filter(id => rooms[id].active !== false);
+
+  if (activeRoomIds.length === 0) {
+    html += '<div class="no-rooms-msg">Nog geen kamers ingesteld. Voeg er een toe via Beheer.</div>';
+  }
+
+  activeRoomIds.forEach(roomId => {
+    const room = rooms[roomId];
+    const pick = findTodayTask(room);
+    const total = (room.taskOrder || []).length;
+    const activeCount = (room.taskOrder || []).filter(id => room.tasks[id] && room.tasks[id].active).length;
+
+    html += `<div class="room-card"><div class="room-header"><span class="room-name">${escapeHtml(room.name)}</span><span class="room-progress">${activeCount} taken in de lijst</span></div>`;
+    if (!pick) {
+      html += `<div class="all-done-msg">Geen actieve taken in deze kamer.</div>`;
+    } else {
+      html += `
+        <div class="today-task">
+          <span class="zone-chip">${escapeHtml(pick.task.zone || 'Algemeen')}</span>
+          <div class="task-text">${escapeHtml(pick.task.text)}</div>
+          <div class="points-tag">+${pick.task.points || 5} punten</div>
+          <button class="done-btn" onclick="completeTask('${roomId}')">Klaar! Punten bijschrijven</button>
+        </div>`;
+    }
+    html += `</div>`;
+  });
+
+  container.innerHTML = html;
+}
+
+function renderBeloningen() {
+  const container = document.getElementById('beloningen-view');
+  const ids = Object.keys(rewards).filter(id => !rewards[id].archived).sort((a, b) => rewards[a].cost - rewards[b].cost);
+  let html = '<div style="margin-bottom:12px;font-size:13px;color:var(--gray);">Spaar je punten op en wissel ze in voor je eigen beloningen. Beheer de lijst onder Beheer.</div>';
+  if (ids.length === 0) {
+    html += '<div class="no-rooms-msg">Nog geen beloningen ingesteld.</div>';
+  } else {
+    ids.forEach(id => {
+      const r = rewards[id];
+      const canAfford = (wallet.balance || 0) >= r.cost;
+      html += `
+        <div class="reward-card">
+          <div><div class="reward-name">${escapeHtml(r.name)}</div><div class="reward-cost">${r.cost} punten</div></div>
+          <button ${canAfford ? '' : 'disabled'} onclick="redeemReward('${id}')">Inwisselen</button>
+        </div>`;
+    });
+  }
+  container.innerHTML = html;
+}
+
+function renderGeschiedenis() {
+  const container = document.getElementById('geschiedenis-view');
+  const entries = history.slice().reverse().slice(0, 60);
+  let html = '';
+  if (entries.length === 0) {
+    html = '<div class="no-rooms-msg">Nog geen geschiedenis.</div>';
+  } else {
+    entries.forEach(e => {
+      const cls = e.type === 'redemption' ? 'redemption' : (e.type === 'bonus' ? 'bonus' : '');
+      const sign = e.type === 'redemption' ? 'neg' : 'pos';
+      const pointsText = e.type === 'redemption' ? ('-' + e.cost) : ('+' + e.points);
+      let line = '';
+      if (e.type === 'redemption') { line = 'Ingewisseld: ' + e.name; }
+      else if (e.type === 'bonus') { line = 'Reeksbonus (' + e.streak + ' dagen op rij)'; }
+      else { line = escapeHtml(e.roomName) + ' — ' + escapeHtml(e.taskText); }
+      html += `
+        <div class="history-item ${cls}">
+          <div class="h-top"><span>${formatDateNL(e.date)}</span><span class="h-points ${sign}">${pointsText}</span></div>
+          <div>${line}</div>
+        </div>`;
+    });
+  }
+  container.innerHTML = html;
+}
+
+function renderBeheer() {
+  const container = document.getElementById('beheer-view');
+  let html = '';
+
+  html += `
+    <div class="admin-section">
+      <h3>Instellingen</h3>
+      <div class="admin-row">
+        <div>
+          <label style="font-size:12px;color:var(--gray);">Herinneringstijd (uur)</label>
+          <select id="reminder-hour">${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${h === settings.reminderHour ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('')}</select>
+        </div>
+      </div>
+      <button class="admin-add-btn" onclick="saveReminderTime()">Herinneringstijd opslaan</button>
+      <div style="margin-top:10px;">
+        <button class="admin-add-btn" onclick="enableNotifications()">Meldingen aanzetten / testen</button>
+      </div>
+    </div>`;
+
+  html += '<div class="admin-section"><h3>Kamers en taken</h3>';
+  const roomIds = Object.keys(rooms).sort((a, b) => (rooms[a].order || 0) - (rooms[b].order || 0));
+  roomIds.forEach(roomId => {
+    const room = rooms[roomId];
+    html += `<div class="admin-room-block">
+      <div class="admin-room-title-row">
+        <span class="room-title">${escapeHtml(room.name)} ${room.active === false ? '<span class="inactive-note">(inactief)</span>' : ''}</span>
+        <span>
+          <button type="button" onclick="renameRoom('${roomId}')">Naam</button>
+          <button type="button" onclick="toggleRoomActive('${roomId}')">${room.active === false ? 'Activeren' : 'Deactiveren'}</button>
+          <button type="button" onclick="deleteRoom('${roomId}')">Verwijderen</button>
+        </span>
+      </div>`;
+    (room.taskOrder || []).forEach((taskId, idx) => {
+      const task = room.tasks[taskId];
+      if (!task) return;
+      const isCursor = idx === room.cursor;
+      html += `
+        <div class="admin-task-row">
+          <span class="cursor-mark">${isCursor ? '👉' : ''}</span>
+          <span class="t-text">${escapeHtml(task.text)} <span class="t-zone">(${escapeHtml(task.zone || '')})</span> ${task.active === false ? '<span class="inactive-note">inactief</span>' : ''}</span>
+          <span class="t-points">${task.points}p</span>
+          <button type="button" onclick="moveTaskUp('${roomId}','${taskId}')" title="Omhoog">&#8593;</button>
+          <button type="button" onclick="moveTaskDown('${roomId}','${taskId}')" title="Omlaag">&#8595;</button>
+          <button type="button" onclick="editTask('${roomId}','${taskId}')" title="Bewerken">&#9998;</button>
+          <button type="button" onclick="toggleTaskActive('${roomId}','${taskId}')" title="Aan/uit">${task.active === false ? '&#9654;' : '&#9208;'}</button>
+          <button type="button" onclick="deleteTask('${roomId}','${taskId}')" title="Verwijderen">&#128465;</button>
+        </div>`;
+    });
+    html += `
+      <div style="margin-top:8px;">
+        <input type="text" id="${roomId}-new-task-text" placeholder="Nieuwe taak omschrijving...">
+        <div class="admin-row">
+          <input type="text" id="${roomId}-new-task-zone" placeholder="Plek/zone (bv. Bureau)">
+          <input type="number" id="${roomId}-new-task-points" placeholder="Punten" value="5" min="1">
+        </div>
+        <button class="admin-add-btn" onclick="addTask('${roomId}')">+ Taak toevoegen</button>
+      </div>
+    </div>`;
+  });
+  html += `
+    <div class="admin-room-block">
+      <input type="text" id="new-room-name" placeholder="Naam nieuwe kamer (bv. Zolder overloop)">
+      <button class="admin-add-btn" onclick="addRoom()">+ Kamer toevoegen</button>
+    </div>
+  </div>`;
+
+  html += '<div class="admin-section"><h3>Beloningen beheren</h3>';
+  const rewardIds = Object.keys(rewards).sort((a, b) => rewards[a].cost - rewards[b].cost);
+  rewardIds.forEach(id => {
+    const r = rewards[id];
+    html += `
+      <div class="admin-task-row">
+        <span class="t-text">${escapeHtml(r.name)} ${r.archived ? '<span class="inactive-note">gearchiveerd</span>' : ''}</span>
+        <span class="t-points">${r.cost}p</span>
+        <button type="button" onclick="editReward('${id}')" title="Bewerken">&#9998;</button>
+        <button type="button" onclick="toggleRewardArchived('${id}')" title="Archiveren">${r.archived ? '&#9654;' : '&#128465;'}</button>
+      </div>`;
+  });
+  html += `
+    <div style="margin-top:8px;">
+      <input type="text" id="new-reward-name" placeholder="Naam van de beloning">
+      <input type="number" id="new-reward-cost" placeholder="Kosten in punten" value="100" min="1">
+      <button class="admin-add-btn" onclick="addReward()">+ Beloning toevoegen</button>
+    </div>
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+// ---- Vandaag: taken afvinken ----
+async function completeTask(roomId) {
+  const room = rooms[roomId];
+  const pick = findTodayTask(room);
+  if (!pick) return;
+
+  const points = pick.task.points || 5;
+  const today = todayStr();
+  let bonus = 0;
+
+  if (wallet.lastCompletedDate !== today) {
+    if (wallet.lastCompletedDate === yesterdayStr()) {
+      wallet.streak = (wallet.streak || 0) + 1;
+    } else {
+      wallet.streak = 1;
+    }
+    wallet.bestStreak = Math.max(wallet.bestStreak || 0, wallet.streak);
+    wallet.lastCompletedDate = today;
+    if (MILESTONES[wallet.streak]) { bonus = MILESTONES[wallet.streak]; }
+  }
+
+  wallet.balance = (wallet.balance || 0) + points + bonus;
+  wallet.lifetime = (wallet.lifetime || 0) + points + bonus;
+
+  room.cursor = (pick.idx + 1) % room.taskOrder.length;
+
+  await saveWallet();
+  await saveRooms();
+  await pushHistory({ type: 'task', date: today, roomId, roomName: room.name, taskId: pick.task.id, taskText: pick.task.text, points });
+  if (bonus > 0) {
+    await pushHistory({ type: 'bonus', date: today, streak: wallet.streak, points: bonus });
+  }
+
+  renderAll();
+  celebrate(bonus > 0 ? '+' + points + ' punten! Én een reeksbonus van +' + bonus + ' 🎉' : '+' + points + ' punten! Goed bezig ✨');
+}
+
+// ---- Beloningen ----
+async function redeemReward(rewardId) {
+  const r = rewards[rewardId];
+  if (!r) return;
+  if ((wallet.balance || 0) < r.cost) { showToast('Nog niet genoeg punten voor deze beloning.'); return; }
+  if (!window.confirm('Inwisselen: "' + r.name + '" voor ' + r.cost + ' punten?')) return;
+  wallet.balance -= r.cost;
+  await saveWallet();
+  await pushHistory({ type: 'redemption', date: todayStr(), rewardId, name: r.name, cost: r.cost });
+  renderAll();
+  showToast('Beloning ingewisseld: ' + r.name + '. Geniet ervan!');
+}
+
+// ---- Beheer: kamers ----
+async function addRoom() {
+  const input = document.getElementById('new-room-name');
+  const name = input.value.trim();
+  if (!name) { showToast('Vul eerst een naam in.'); return; }
+  const id = newId('room');
+  const order = Object.keys(rooms).length;
+  rooms[id] = { name, order, active: true, cursor: 0, taskOrder: [], tasks: {} };
+  await saveRooms();
+  renderAll();
+  showToast('Kamer toegevoegd.');
+}
+async function renameRoom(roomId) {
+  const room = rooms[roomId];
+  const name = window.prompt('Naam van de kamer:', room.name);
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) { showToast('Naam mag niet leeg zijn.'); return; }
+  room.name = trimmed;
+  await saveRooms();
+  renderAll();
+}
+async function toggleRoomActive(roomId) {
+  rooms[roomId].active = rooms[roomId].active === false ? true : false;
+  await saveRooms();
+  renderAll();
+}
+async function deleteRoom(roomId) {
+  const room = rooms[roomId];
+  if (!window.confirm('Kamer "' + room.name + '" en alle taken erin verwijderen?')) return;
+  delete rooms[roomId];
+  await saveRooms();
+  renderAll();
+  showToast('Kamer verwijderd.');
+}
+
+// ---- Beheer: taken ----
+async function addTask(roomId) {
+  const room = rooms[roomId];
+  const textInput = document.getElementById(roomId + '-new-task-text');
+  const zoneInput = document.getElementById(roomId + '-new-task-zone');
+  const pointsInput = document.getElementById(roomId + '-new-task-points');
+  const text = textInput.value.trim();
+  if (!text) { showToast('Vul eerst een omschrijving in.'); return; }
+  const id = newId('task');
+  const points = Math.max(1, parseInt(pointsInput.value, 10) || 5);
+  room.tasks[id] = { id, text, zone: zoneInput.value.trim(), points, active: true };
+  room.taskOrder.push(id);
+  await saveRooms();
+  renderAll();
+  showToast('Taak toegevoegd.');
+}
+async function editTask(roomId, taskId) {
+  const task = rooms[roomId].tasks[taskId];
+  const text = window.prompt('Taakomschrijving:', task.text);
+  if (text === null) return;
+  const trimmed = text.trim();
+  if (!trimmed) { showToast('Omschrijving mag niet leeg zijn.'); return; }
+  const zone = window.prompt('Plek/zone:', task.zone || '');
+  const points = window.prompt('Punten:', task.points);
+  task.text = trimmed;
+  if (zone !== null) task.zone = zone.trim();
+  if (points !== null && !isNaN(parseInt(points, 10))) task.points = Math.max(1, parseInt(points, 10));
+  await saveRooms();
+  renderAll();
+  showToast('Taak aangepast.');
+}
+async function toggleTaskActive(roomId, taskId) {
+  const task = rooms[roomId].tasks[taskId];
+  task.active = task.active === false ? true : false;
+  await saveRooms();
+  renderAll();
+}
+async function deleteTask(roomId, taskId) {
+  const room = rooms[roomId];
+  const task = room.tasks[taskId];
+  if (!window.confirm('Taak verwijderen: "' + task.text + '"?')) return;
+  delete room.tasks[taskId];
+  room.taskOrder = room.taskOrder.filter(id => id !== taskId);
+  if (room.cursor >= room.taskOrder.length) room.cursor = 0;
+  await saveRooms();
+  renderAll();
+  showToast('Taak verwijderd.');
+}
+async function moveTaskUp(roomId, taskId) {
+  const room = rooms[roomId];
+  const idx = room.taskOrder.indexOf(taskId);
+  if (idx <= 0) return;
+  [room.taskOrder[idx - 1], room.taskOrder[idx]] = [room.taskOrder[idx], room.taskOrder[idx - 1]];
+  await saveRooms();
+  renderAll();
+}
+async function moveTaskDown(roomId, taskId) {
+  const room = rooms[roomId];
+  const idx = room.taskOrder.indexOf(taskId);
+  if (idx === -1 || idx >= room.taskOrder.length - 1) return;
+  [room.taskOrder[idx + 1], room.taskOrder[idx]] = [room.taskOrder[idx], room.taskOrder[idx + 1]];
+  await saveRooms();
+  renderAll();
+}
+
+// ---- Beheer: beloningen ----
+async function addReward() {
+  const nameInput = document.getElementById('new-reward-name');
+  const costInput = document.getElementById('new-reward-cost');
+  const name = nameInput.value.trim();
+  const cost = Math.max(1, parseInt(costInput.value, 10) || 100);
+  if (!name) { showToast('Vul eerst een naam in.'); return; }
+  const id = newId('reward');
+  rewards[id] = { name, cost, archived: false };
+  await saveRewards();
+  renderAll();
+  showToast('Beloning toegevoegd.');
+}
+async function editReward(id) {
+  const r = rewards[id];
+  const name = window.prompt('Naam van de beloning:', r.name);
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) { showToast('Naam mag niet leeg zijn.'); return; }
+  const cost = window.prompt('Kosten in punten:', r.cost);
+  r.name = trimmed;
+  if (cost !== null && !isNaN(parseInt(cost, 10))) r.cost = Math.max(1, parseInt(cost, 10));
+  await saveRewards();
+  renderAll();
+  showToast('Beloning aangepast.');
+}
+async function toggleRewardArchived(id) {
+  rewards[id].archived = !rewards[id].archived;
+  await saveRewards();
+  renderAll();
+}
+
+// ---- Instellingen ----
+async function saveReminderTime() {
+  settings.reminderHour = parseInt(document.getElementById('reminder-hour').value, 10);
+  settings.reminderMinute = 0;
+  await saveSettings();
+  showToast('Herinneringstijd opgeslagen: ' + String(settings.reminderHour).padStart(2, '0') + ':00 uur.');
+}
+
+// ---- Pushmeldingen ----
+async function enableNotifications() {
+  if (!messaging) { showToast('Pushmeldingen worden niet ondersteund op dit apparaat/deze browser.'); return; }
+  if (!VAPID_KEY) { showToast('VAPID-sleutel ontbreekt nog -- zie README.md.'); return; }
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') { showToast('Meldingen zijn niet toegestaan.'); return; }
+    const reg = await navigator.serviceWorker.ready;
+    const token = await messaging.getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+    if (!token) { showToast('Kon geen meldingstoken ophalen.'); return; }
+    const key = token.replace(/[.#$\[\]\/]/g, '_');
+    if (fbRoot) { await fbRoot.child('fcmTokens').child(key).set({ token, addedAt: new Date().toISOString() }); }
+    showToast('Meldingen staan aan! Je krijgt dagelijks een herinnering.');
+    renderAll();
+  } catch (e) {
+    console.error(e);
+    showToast('Meldingen inschakelen is niet gelukt: ' + e.message);
+  }
+}
+
+function celebrate(msg) {
+  showToast(msg, true);
+  const colors = ['#E0A2A2', '#c98080', '#c99a3e', '#5c9a6e', '#2D2827'];
+  for (let i = 0; i < 24; i++) {
+    const piece = document.createElement('div');
+    piece.className = 'confetti-piece';
+    piece.style.left = Math.random() * 100 + 'vw';
+    piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+    piece.style.animationDuration = (1.6 + Math.random() * 1.2) + 's';
+    document.body.appendChild(piece);
+    setTimeout(() => piece.remove(), 3200);
+  }
+}
+
+function showToast(msg, celebrateStyle) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.toggle('celebrate', !!celebrateStyle);
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 3500);
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.tab + '-view').classList.add('active');
+  });
+});
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(e => console.error('Service worker registratie mislukt', e));
+  });
+}
+
+async function init() {
+  document.getElementById('date-label').textContent = new Date().toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  await loadAll();
+}
+init();
+</script>
+
+</body>
+</html>
