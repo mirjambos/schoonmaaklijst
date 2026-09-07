@@ -54,6 +54,13 @@
   .done-btn { width: 100%; padding: 13px; background: var(--brown); color: #fff; border: none; border-radius: 8px; font-size: 14.5px; font-weight: 700; cursor: pointer; }
   .done-btn:active { background: var(--pink-dark); }
   .all-done-msg { padding: 20px 16px; text-align: center; color: var(--green); font-weight: 700; font-size: 14px; }
+  .quick-add-row { border-top: 1px solid var(--border); padding: 10px 16px; }
+  .quick-add-link { background: none; border: none; color: var(--pink-dark); font-size: 13px; font-weight: 700; cursor: pointer; padding: 4px 0; }
+  .quick-add-form input { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; margin-bottom: 8px; font-family: inherit; }
+  .quick-add-form .admin-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .quick-add-form .admin-row > * { flex: 1; }
+  .quick-add-submit { background: var(--brown); color: #fff; border: none; border-radius: 6px; padding: 9px 14px; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .quick-add-cancel { background: none; border: 1px solid var(--border); border-radius: 6px; padding: 9px 14px; font-size: 13px; cursor: pointer; }
   .no-rooms-msg { text-align: center; padding: 40px 16px; color: var(--gray); font-size: 14px; }
 
   .notif-banner { background: #fff; border: 1px dashed var(--pink-dark); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; font-size: 13px; }
@@ -269,6 +276,7 @@ let rewards = {};
 let history = [];
 let settings = { reminderHour: 8, reminderMinute: 0 };
 let adminMode = true; // geen wachtwoord nodig -- dit is een persoonlijke app voor eigen gebruik
+let quickAddOpen = {}; // roomId -> of het snel-toevoegen-formulier op Vandaag openstaat
 
 async function loadAll() {
   try { rooms = JSON.parse(lsGet('rooms') || 'null') || defaultRooms(); } catch (e) { rooms = defaultRooms(); }
@@ -413,6 +421,24 @@ function renderVandaag() {
           <button class="done-btn" onclick="completeTask('${roomId}')">Klaar! Punten bijschrijven</button>
         </div>`;
     }
+    html += `<div class="quick-add-row">`;
+    if (quickAddOpen[roomId]) {
+      html += `
+        <div class="quick-add-form">
+          <input type="text" id="vandaag-${roomId}-new-task-text" placeholder="Nieuwe taak in ${escapeHtml(room.name)}...">
+          <div class="admin-row">
+            <input type="text" id="vandaag-${roomId}-new-task-zone" placeholder="Plek/zone (optioneel)">
+            <input type="number" id="vandaag-${roomId}-new-task-points" placeholder="Punten" value="5" min="1">
+          </div>
+          <div class="admin-row">
+            <button type="button" class="quick-add-submit" onclick="addTaskFromInputs('${roomId}','vandaag-')">Toevoegen</button>
+            <button type="button" class="quick-add-cancel" onclick="toggleQuickAdd('${roomId}')">Annuleren</button>
+          </div>
+        </div>`;
+    } else {
+      html += `<button type="button" class="quick-add-link" onclick="toggleQuickAdd('${roomId}')">+ Taak toevoegen aan ${escapeHtml(room.name)}</button>`;
+    }
+    html += `</div>`;
     html += `</div>`;
   });
 
@@ -514,12 +540,12 @@ function renderBeheer() {
     });
     html += `
       <div style="margin-top:8px;">
-        <input type="text" id="${roomId}-new-task-text" placeholder="Nieuwe taak omschrijving...">
+        <input type="text" id="beheer-${roomId}-new-task-text" placeholder="Nieuwe taak omschrijving...">
         <div class="admin-row">
-          <input type="text" id="${roomId}-new-task-zone" placeholder="Plek/zone (bv. Bureau)">
-          <input type="number" id="${roomId}-new-task-points" placeholder="Punten" value="5" min="1">
+          <input type="text" id="beheer-${roomId}-new-task-zone" placeholder="Plek/zone (bv. Bureau)">
+          <input type="number" id="beheer-${roomId}-new-task-points" placeholder="Punten" value="5" min="1">
         </div>
-        <button class="admin-add-btn" onclick="addTask('${roomId}')">+ Taak toevoegen</button>
+        <button class="admin-add-btn" onclick="addTaskFromInputs('${roomId}','beheer-')">+ Taak toevoegen</button>
       </div>
     </div>`;
   });
@@ -639,21 +665,30 @@ async function deleteRoom(roomId) {
   showToast('Kamer verwijderd.');
 }
 
-// ---- Beheer: taken ----
-async function addTask(roomId) {
+// ---- Taak toevoegen (gedeeld door Vandaag-snelinvoer en Beheer) ----
+// idPrefix onderscheidt de twee sets invoervelden in de DOM (Vandaag en Beheer staan
+// tegelijk in de pagina, dus de id's mogen niet botsen).
+function toggleQuickAdd(roomId) {
+  quickAddOpen[roomId] = !quickAddOpen[roomId];
+  renderVandaag();
+}
+async function addTaskFromInputs(roomId, idPrefix) {
   const room = rooms[roomId];
-  const textInput = document.getElementById(roomId + '-new-task-text');
-  const zoneInput = document.getElementById(roomId + '-new-task-zone');
-  const pointsInput = document.getElementById(roomId + '-new-task-points');
+  const textInput = document.getElementById(idPrefix + roomId + '-new-task-text');
+  const zoneInput = document.getElementById(idPrefix + roomId + '-new-task-zone');
+  const pointsInput = document.getElementById(idPrefix + roomId + '-new-task-points');
   const text = textInput.value.trim();
   if (!text) { showToast('Vul eerst een omschrijving in.'); return; }
   const id = newId('task');
   const points = Math.max(1, parseInt(pointsInput.value, 10) || 5);
   room.tasks[id] = { id, text, zone: zoneInput.value.trim(), points, active: true };
-  room.taskOrder.push(id);
+  // Vlak vóór de huidige cursor invoegen, zodat de nieuwe taak meteen "vandaag" aan de
+  // beurt is in plaats van pas na de rest van de rij.
+  room.taskOrder.splice(room.cursor, 0, id);
+  quickAddOpen[roomId] = false;
   await saveRooms();
   renderAll();
-  showToast('Taak toegevoegd.');
+  showToast('Taak toegevoegd aan ' + room.name + ' — deze is nu als eerste aan de beurt.');
 }
 async function editTask(roomId, taskId) {
   const task = rooms[roomId].tasks[taskId];
