@@ -53,6 +53,8 @@
   .today-task .points-tag { font-size: 12px; color: var(--gold); font-weight: 700; margin-bottom: 12px; }
   .done-btn { width: 100%; padding: 13px; background: var(--brown); color: #fff; border: none; border-radius: 8px; font-size: 14.5px; font-weight: 700; cursor: pointer; }
   .done-btn:active { background: var(--pink-dark); }
+  .done-btn:disabled { background: #ccc; cursor: not-allowed; }
+  .today-task.exercise-done { opacity: 0.55; }
   .all-done-msg { padding: 20px 16px; text-align: center; color: var(--green); font-weight: 700; font-size: 14px; }
   .quick-add-row { border-top: 1px solid var(--border); padding: 10px 16px; }
   .quick-add-link { background: none; border: none; color: var(--pink-dark); font-size: 13px; font-weight: 700; cursor: pointer; padding: 4px 0; }
@@ -237,10 +239,18 @@ function defaultRooms() {
     { id: 'zk-raam', text: 'Raam en vensterbank afnemen', zone: 'Raam', points: 5, active: true },
     { id: 'zk-spullen', text: 'Losse spullen een vaste plek geven', zone: 'Algemeen', points: 8, active: true }
   ];
+  const sportTasks = [
+    { id: 'sp-buik', text: 'Buikspieroefening: 1 set (bv. crunches of een plank van 30-60 sec)', zone: 'Buik', points: 8, active: true },
+    { id: 'sp-squat', text: 'Squats: 1 set (bv. 15-20 herhalingen)', zone: 'Benen', points: 8, active: true },
+    { id: 'sp-lunge', text: 'Lunges: 1 set (bv. 10 per been)', zone: 'Benen', points: 8, active: true }
+  ];
   const toMap = (arr) => { const m = {}; arr.forEach(t => { m[t.id] = t; }); return m; };
   return {
-    'slaapkamer': { name: 'Slaapkamer', order: 0, active: true, cursor: 0, taskOrder: bedTasks.map(t => t.id), tasks: toMap(bedTasks) },
-    'zolderkamer': { name: 'Zolderkamer', order: 1, active: true, cursor: 0, taskOrder: zolderTasks.map(t => t.id), tasks: toMap(zolderTasks) }
+    'slaapkamer': { name: 'Slaapkamer', order: 0, active: true, mode: 'rotate', cursor: 0, taskOrder: bedTasks.map(t => t.id), tasks: toMap(bedTasks) },
+    'zolderkamer': { name: 'Zolderkamer', order: 1, active: true, mode: 'rotate', cursor: 0, taskOrder: zolderTasks.map(t => t.id), tasks: toMap(zolderTasks) },
+    // mode "all" = elke actieve taak staat élke dag klaar (in plaats van roterend één per dag) --
+    // past beter bij een vaste, korte sportroutine dan de rotatie-aanpak van de schoonmaakkamers.
+    'sport': { name: 'Sport', order: 2, active: true, mode: 'all', cursor: 0, taskOrder: sportTasks.map(t => t.id), tasks: toMap(sportTasks) }
   };
 }
 function defaultRewards() {
@@ -285,6 +295,7 @@ async function loadAll() {
   try { history = JSON.parse(lsGet('history') || '[]'); } catch (e) { history = []; }
   try { settings = JSON.parse(lsGet('settings') || 'null') || settings; } catch (e) {}
 
+  if (ensureSportRoomSeeded()) { lsSet('rooms', JSON.stringify(rooms)); lsSet('settings', JSON.stringify(settings)); }
   renderAll();
 
   if (!fbRoot) { setSyncStatus('Alleen lokaal (geen Firebase-verbinding)', false); return; }
@@ -306,6 +317,8 @@ async function loadAll() {
     history = data.history ? Object.keys(data.history).sort().map(k => data.history[k]) : [];
     settings = data.settings || settings;
 
+    if (ensureSportRoomSeeded()) { saveRooms(); saveSettings(); }
+
     lsSet('rooms', JSON.stringify(rooms));
     lsSet('wallet', JSON.stringify(wallet));
     lsSet('rewards', JSON.stringify(rewards));
@@ -321,7 +334,19 @@ async function loadAll() {
 
 function seedFirebase() {
   if (!fbRoot) return;
+  settings.sportRoomAdded = true;
   fbRoot.set({ rooms: defaultRooms(), wallet, rewards: defaultRewards(), settings }).catch(e => console.error(e));
+}
+
+// Eenmalige migratie voor wie de app al gebruikte vóórdat de Sport-kamer bestond: voegt
+// 'm toe aan bestaande data zonder iets anders te overschrijven. settings.sportRoomAdded
+// zorgt dat dit maar één keer gebeurt -- verwijder je de Sport-kamer later zelf via
+// Beheer, dan komt hij niet steeds terug.
+function ensureSportRoomSeeded() {
+  if (settings.sportRoomAdded) return false;
+  if (!rooms['sport']) { rooms['sport'] = defaultRooms()['sport']; }
+  settings.sportRoomAdded = true;
+  return true;
 }
 
 async function saveRooms() {
@@ -405,21 +430,47 @@ function renderVandaag() {
 
   activeRoomIds.forEach(roomId => {
     const room = rooms[roomId];
-    const pick = findTodayTask(room);
-    const total = (room.taskOrder || []).length;
     const activeCount = (room.taskOrder || []).filter(id => room.tasks[id] && room.tasks[id].active).length;
+    const isAllMode = room.mode === 'all';
+    const today = todayStr();
 
-    html += `<div class="room-card"><div class="room-header"><span class="room-name">${escapeHtml(room.name)}</span><span class="room-progress">${activeCount} taken in de lijst</span></div>`;
-    if (!pick) {
-      html += `<div class="all-done-msg">Geen actieve taken in deze kamer.</div>`;
+    let progressLabel = activeCount + ' taken in de lijst';
+    if (isAllMode) {
+      const doneToday = (room.taskOrder || []).filter(id => room.tasks[id] && room.tasks[id].active && room.tasks[id].lastDoneDate === today).length;
+      progressLabel = doneToday + '/' + activeCount + ' gedaan vandaag';
+    }
+
+    html += `<div class="room-card"><div class="room-header"><span class="room-name">${escapeHtml(room.name)}</span><span class="room-progress">${progressLabel}</span></div>`;
+
+    if (isAllMode) {
+      const tasks = (room.taskOrder || []).map(id => room.tasks[id]).filter(t => t && t.active);
+      if (tasks.length === 0) {
+        html += `<div class="all-done-msg">Geen actieve taken in deze kamer.</div>`;
+      } else {
+        tasks.forEach(task => {
+          const done = task.lastDoneDate === today;
+          html += `
+            <div class="today-task ${done ? 'exercise-done' : ''}">
+              <span class="zone-chip">${escapeHtml(task.zone || 'Algemeen')}</span>
+              <div class="task-text">${escapeHtml(task.text)}</div>
+              <div class="points-tag">+${task.points || 5} punten</div>
+              <button class="done-btn" ${done ? 'disabled' : ''} onclick="completeAllTask('${roomId}','${task.id}')">${done ? '✓ Gedaan voor vandaag' : 'Klaar! Punten bijschrijven'}</button>
+            </div>`;
+        });
+      }
     } else {
-      html += `
-        <div class="today-task">
-          <span class="zone-chip">${escapeHtml(pick.task.zone || 'Algemeen')}</span>
-          <div class="task-text">${escapeHtml(pick.task.text)}</div>
-          <div class="points-tag">+${pick.task.points || 5} punten</div>
-          <button class="done-btn" onclick="completeTask('${roomId}')">Klaar! Punten bijschrijven</button>
-        </div>`;
+      const pick = findTodayTask(room);
+      if (!pick) {
+        html += `<div class="all-done-msg">Geen actieve taken in deze kamer.</div>`;
+      } else {
+        html += `
+          <div class="today-task">
+            <span class="zone-chip">${escapeHtml(pick.task.zone || 'Algemeen')}</span>
+            <div class="task-text">${escapeHtml(pick.task.text)}</div>
+            <div class="points-tag">+${pick.task.points || 5} punten</div>
+            <button class="done-btn" onclick="completeTask('${roomId}')">Klaar! Punten bijschrijven</button>
+          </div>`;
+      }
     }
     html += `<div class="quick-add-row">`;
     if (quickAddOpen[roomId]) {
@@ -513,11 +564,13 @@ function renderBeheer() {
   const roomIds = Object.keys(rooms).sort((a, b) => (rooms[a].order || 0) - (rooms[b].order || 0));
   roomIds.forEach(roomId => {
     const room = rooms[roomId];
+    const isAllModeRoom = room.mode === 'all';
     html += `<div class="admin-room-block">
       <div class="admin-room-title-row">
         <span class="room-title">${escapeHtml(room.name)} ${room.active === false ? '<span class="inactive-note">(inactief)</span>' : ''}</span>
         <span>
           <button type="button" onclick="renameRoom('${roomId}')">Naam</button>
+          <button type="button" onclick="toggleRoomMode('${roomId}')" title="Roterend = 1 taak per dag, Elke dag = alle taken elke dag">${isAllModeRoom ? 'Modus: elke dag' : 'Modus: roterend'}</button>
           <button type="button" onclick="toggleRoomActive('${roomId}')">${room.active === false ? 'Activeren' : 'Deactiveren'}</button>
           <button type="button" onclick="deleteRoom('${roomId}')">Verwijderen</button>
         </span>
@@ -525,7 +578,7 @@ function renderBeheer() {
     (room.taskOrder || []).forEach((taskId, idx) => {
       const task = room.tasks[taskId];
       if (!task) return;
-      const isCursor = idx === room.cursor;
+      const isCursor = !isAllModeRoom && idx === room.cursor;
       html += `
         <div class="admin-task-row">
           <span class="cursor-mark">${isCursor ? '👉' : ''}</span>
@@ -580,15 +633,12 @@ function renderBeheer() {
 }
 
 // ---- Vandaag: taken afvinken ----
-async function completeTask(roomId) {
-  const room = rooms[roomId];
-  const pick = findTodayTask(room);
-  if (!pick) return;
-
-  const points = pick.task.points || 5;
+// Verwerkt de puntentelling/streak die voor élke soort taak hetzelfde is (roterende
+// schoonmaaktaak of een dagelijkse sportoefening) -- muteert `wallet` maar slaat 'm nog
+// niet op, dat doet de aanroeper zelf samen met de rest van zijn wijzigingen.
+function awardPointsForToday(points) {
   const today = todayStr();
   let bonus = 0;
-
   if (wallet.lastCompletedDate !== today) {
     if (wallet.lastCompletedDate === yesterdayStr()) {
       wallet.streak = (wallet.streak || 0) + 1;
@@ -599,15 +649,48 @@ async function completeTask(roomId) {
     wallet.lastCompletedDate = today;
     if (MILESTONES[wallet.streak]) { bonus = MILESTONES[wallet.streak]; }
   }
-
   wallet.balance = (wallet.balance || 0) + points + bonus;
   wallet.lifetime = (wallet.lifetime || 0) + points + bonus;
+  return bonus;
+}
 
+async function completeTask(roomId) {
+  const room = rooms[roomId];
+  const pick = findTodayTask(room);
+  if (!pick) return;
+
+  const points = pick.task.points || 5;
+  const today = todayStr();
+  const bonus = awardPointsForToday(points);
   room.cursor = (pick.idx + 1) % room.taskOrder.length;
 
   await saveWallet();
   await saveRooms();
   await pushHistory({ type: 'task', date: today, roomId, roomName: room.name, taskId: pick.task.id, taskText: pick.task.text, points });
+  if (bonus > 0) {
+    await pushHistory({ type: 'bonus', date: today, streak: wallet.streak, points: bonus });
+  }
+
+  renderAll();
+  celebrate(bonus > 0 ? '+' + points + ' punten! Én een reeksbonus van +' + bonus + ' 🎉' : '+' + points + ' punten! Goed bezig ✨');
+}
+
+// Taken in een "mode: all"-kamer (bv. Sport): elke actieve taak staat elke dag los klaar
+// om af te vinken, in plaats van één roterende taak per kamer per dag.
+async function completeAllTask(roomId, taskId) {
+  const room = rooms[roomId];
+  const task = room.tasks[taskId];
+  if (!task || task.active === false) return;
+  const today = todayStr();
+  if (task.lastDoneDate === today) return; // al gedaan vandaag, niets te doen
+
+  const points = task.points || 5;
+  const bonus = awardPointsForToday(points);
+  task.lastDoneDate = today;
+
+  await saveWallet();
+  await saveRooms();
+  await pushHistory({ type: 'task', date: today, roomId, roomName: room.name, taskId, taskText: task.text, points });
   if (bonus > 0) {
     await pushHistory({ type: 'bonus', date: today, streak: wallet.streak, points: bonus });
   }
@@ -650,6 +733,13 @@ async function renameRoom(roomId) {
   room.name = trimmed;
   await saveRooms();
   renderAll();
+}
+async function toggleRoomMode(roomId) {
+  const room = rooms[roomId];
+  room.mode = room.mode === 'all' ? 'rotate' : 'all';
+  await saveRooms();
+  renderAll();
+  showToast('Modus voor ' + room.name + ' aangepast naar ' + (room.mode === 'all' ? '"elke dag"' : '"roterend"') + '.');
 }
 async function toggleRoomActive(roomId) {
   rooms[roomId].active = rooms[roomId].active === false ? true : false;

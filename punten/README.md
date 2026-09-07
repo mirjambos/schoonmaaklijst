@@ -1,19 +1,26 @@
 # Kamerpunten
 
-Persoonlijke app om de slaapkamer en zolderkamer schoon te houden in kleine, dagelijkse
-stapjes — met punten die je zelf inwisselt voor eigen beloningen. Losse app naast de
-gedeelde `schoonmaaklijst` (index.html in de hoofdmap van deze repo) — deze gebruikt
-dezelfde Firebase-koppeling maar een eigen datapad (`puntenapp`) en heeft geen enkele
-functionele relatie met die gedeelde huishoud-checklist.
+Persoonlijke app om de slaapkamer en zolderkamer schoon te houden én een minimale
+dagelijkse sportroutine vol te houden, allebei in kleine stapjes — met punten die je
+zelf inwisselt voor eigen beloningen. Losse app naast de gedeelde `schoonmaaklijst`
+(index.html in de hoofdmap van deze repo) — deze gebruikt dezelfde Firebase-koppeling
+maar een eigen datapad (`puntenapp`) en heeft geen enkele functionele relatie met die
+gedeelde huishoud-checklist.
 
 ## Hoe het werkt
 
-- Elke kamer heeft een vaste, doorlopende lijst met kleine taken (2-10 minuten werk).
-  De app laat per kamer steeds "de volgende taak in de rij" zien — zo komt na verloop
-  van tijd alles een keer aan de beurt, zonder dat je zelf hoeft te kiezen.
+- Elke "kamer" heeft een van twee standen (in te stellen via Beheer → "Modus"-knop bij
+  de kamer):
+  - **Roterend** (Slaapkamer, Zolderkamer): een vaste, doorlopende lijst met kleine
+    taken (2-10 minuten werk). De app laat steeds "de volgende taak in de rij" zien —
+    zo komt na verloop van tijd alles een keer aan de beurt, zonder dat je zelf hoeft
+    te kiezen.
+  - **Elke dag** (Sport): alle actieve taken in die kamer staan élke dag klaar om apart
+    afgevinkt te worden (bv. buikspieroefening, squat, lunge) — geen rotatie, gewoon
+    een vaste routine die dagelijks reset.
 - Taak afvinken = punten bijschrijven op je puntensaldo. Elke dag dat je minstens één
-  taak afrondt telt mee voor je reeks (streak); bij mijlpalen (3, 7, 14, 30, 60, 100
-  dagen op rij) krijg je een eenmalige bonus.
+  taak afrondt (in welke kamer dan ook) telt mee voor je reeks (streak); bij mijlpalen
+  (3, 7, 14, 30, 60, 100 dagen op rij) krijg je een eenmalige bonus.
 - Onder **Beloningen** stel je zelf een lijst in van dingen die je jezelf gunt, met een
   puntenprijs. Genoeg punten? Dan kun je "m inwisselen" — dat is de echte inzet naast
   het spelletje.

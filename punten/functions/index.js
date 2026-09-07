@@ -34,6 +34,21 @@ function findTodayTask(room) {
   return null;
 }
 
+// Bouwt de melderegel(s) voor één kamer. Een "mode: all"-kamer (bv. Sport) toont elke
+// nog niet vandaag afgevinkte taak apart, i.p.v. de ene roterende taak van de
+// schoonmaakkamers -- zelfde onderscheid als in renderVandaag() in index.html.
+function roomLines(room, today) {
+  if (room.mode === 'all') {
+    const order = room.taskOrder || [];
+    return order
+      .map((id) => room.tasks && room.tasks[id])
+      .filter((task) => task && task.active && task.lastDoneDate !== today)
+      .map((task) => `${room.name}: ${task.text} (+${task.points || 5}p)`);
+  }
+  const task = findTodayTask(room);
+  return task ? [`${room.name}: ${task.text} (+${task.points || 5}p)`] : [];
+}
+
 exports.dailyReminder = onSchedule(
   { schedule: 'every 60 minutes', timeZone: 'Europe/Amsterdam', region: 'europe-west1' },
   async () => {
@@ -63,8 +78,7 @@ exports.dailyReminder = onSchedule(
 
     const lines = [];
     roomIds.forEach((roomId) => {
-      const task = findTodayTask(rooms[roomId]);
-      if (task) lines.push(`${rooms[roomId].name}: ${task.text} (+${task.points || 5}p)`);
+      lines.push(...roomLines(rooms[roomId], today));
     });
 
     if (lines.length === 0) {
