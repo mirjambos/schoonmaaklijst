@@ -1,5 +1,5 @@
 // Offline-cache: pagina is ook zonder internet te openen. Netwerk eerst, zodat updates direct binnenkomen.
-const CACHE = 'boodschappen-2026-10-18g';
+const CACHE = 'boodschappen-2026-10-18h';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 self.addEventListener('install', function (e) { e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(FILES); })); self.skipWaiting(); });
 self.addEventListener('activate', function (e) {

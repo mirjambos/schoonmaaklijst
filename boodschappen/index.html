@@ -76,7 +76,7 @@
 <script>
 // Alle gegevens blijven in de browser (localStorage). De bestelgeschiedenis staat
 // bewust NIET in deze repo (publiek): importeer hem via tabblad "Data".
-const VERSION = '2026-10-18g';
+const VERSION = '2026-10-18h';
 const KEY = 'ahb_v1';
 const UI = { open: { 'Vaker gekocht': false, 'Soms gekocht': false }, q: '', byDept: false, menu: null };
 const DAY = 86400000;
@@ -104,8 +104,11 @@ function load() {
   } catch (e) {}
   return { orders: [], cfg: {}, current: {} };
 }
-function save() {
+function save(opts) {
+  const remote = opts && opts.remote;
+  if (!remote) S.t = Date.now();
   try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('Opslaan lukt niet in deze browser'); }
+  if (!remote && typeof syncSchedule === 'function') syncSchedule();
 }
 function cfg() {
   const c = S.cfg;
@@ -154,12 +157,12 @@ function nice(s) { return FMT.format(parse(s)); }
 function eur(n) { return '€ ' + n.toFixed(2).replace('.', ','); }
 
 // ---------- analyse ----------
-function history() {
+function orderHistory() {
   return S.orders.slice().sort(function (a, b) { return a.date < b.date ? -1 : 1; });
 }
 function productStats() {
   const map = {};
-  history().forEach(function (o, idx) {
+  orderHistory().forEach(function (o, idx) {
     const seen = {};
     o.items.forEach(function (it) {
       const p = map[it.name] || (map[it.name] = { name: it.name, events: [], price: 0, idxs: [] });
@@ -174,7 +177,7 @@ function productStats() {
 function median(a) { const s = a.slice().sort(function (x, y) { return x - y; }); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2); }
 
 function standardItems() {
-  const hist = history(); const stats = productStats();
+  const hist = orderHistory(); const stats = productStats();
   const window_ = 12; const n = hist.length; if (!n) return [];
   const from = Math.max(0, n - window_); const span = n - from;
   const out = [];
@@ -195,7 +198,7 @@ function standardItems() {
 // Aankopen per product, maar huishoudcategorieen (bv. alle halvarine-merken) samengenomen.
 function groupedStats() {
   const groups = {};
-  history().forEach(function (o) {
+  orderHistory().forEach(function (o) {
     const perGroup = {};
     o.items.forEach(function (it) {
       const cat = defaultFor(it.name);
@@ -213,7 +216,7 @@ function groupedStats() {
 }
 
 function suggestions() {
-  const hist = history(); if (!hist.length) return [];
+  const hist = orderHistory(); if (!hist.length) return [];
   const groups = groupedStats(); const T = nextDelivery();
   const std = {}; standardItems().forEach(function (s) { std[s.name] = 1; });
   const out = [];
@@ -292,7 +295,7 @@ function deptIndex(name) { return DEPT_ORDER.indexOf(deptOf(name)); }
 
 // Producten die vaak samen in dezelfde bestelling zitten, bv. alles voor taco's.
 function coSets() {
-  const hist = history(); const idx = {};
+  const hist = orderHistory(); const idx = {};
   hist.forEach(function (o, i) { const seen = {}; o.items.forEach(function (it) { if (seen[it.name]) return; seen[it.name] = 1; (idx[it.name] = idx[it.name] || []).push(i); }); });
   const names = Object.keys(idx).filter(function (n) { return idx[n].length >= 5 && !defaultFor(n) && cfg().ignored.indexOf(n) < 0; });
   const par = {}; names.forEach(function (n) { par[n] = n; });
@@ -556,8 +559,9 @@ function renderStandard() {
 
 function renderData() {
   const v = document.getElementById('data-view'); v.textContent = '';
-  const hist = history();
+  const hist = orderHistory();
   v.appendChild(h('p', { class: 'note', text: hist.length ? 'Versie ' + VERSION + ' · ' + hist.length + ' bestellingen geladen (' + hist[0].date + ' t/m ' + hist[hist.length - 1].date + '). Alles staat alleen in deze browser.' : 'Nog geen bestellingen geladen.' }));
+  v.appendChild(syncCard());
   const file = h('input', { type: 'file', accept: 'application/json,.json', style: 'display:none', onchange: function (e) { importFile(e.target.files[0]); } });
   v.appendChild(file);
   if (hist.length) {
@@ -617,6 +621,120 @@ function exportAll() {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
+
+
+// ---------- Synchronisatie tussen apparaten ----------
+// Gegevens worden in de browser versleuteld (AES-GCM) voordat ze naar Firebase gaan. Pad en sleutel komen
+// uit een willekeurige koppelcode die alleen op jouw apparaten staat; de database ziet alleen onleesbare tekst.
+const SYNC_KEY = 'ahb_sync', DEV_KEY = 'ahb_dev';
+const FB_CONFIG = { apiKey: 'AIzaSyAvYgPHDIrUUkIPsMfNEWojgzCBO9pfXr8', authDomain: 'mcb-paklijst-2026.firebaseapp.com', databaseURL: 'https://mcb-paklijst-2026-default-rtdb.europe-west1.firebasedatabase.app', projectId: 'mcb-paklijst-2026', storageBucket: 'mcb-paklijst-2026.firebasestorage.app', messagingSenderId: '373547248244', appId: '1:373547248244:web:0f6c930429328f5d98ff21' };
+let SY = { code: '', ref: null, key: null, timer: null, lastT: 0, msg: '' };
+function lsGet(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+function lsSet(k, v) { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (e) {} }
+function deviceId() { let d = lsGet(DEV_KEY); if (!d) { d = Math.random().toString(36).slice(2) + Date.now().toString(36); lsSet(DEV_KEY, d); } return d; }
+function b64(bytes) { let s2 = ''; for (let i = 0; i < bytes.length; i += 8192) s2 += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192)); return btoa(s2); }
+function unb64(t) { return Uint8Array.from(atob(t), function (c) { return c.charCodeAt(0); }); }
+async function syKeys(code) {
+  const enc = new TextEncoder();
+  const idBuf = await crypto.subtle.digest('SHA-256', enc.encode('ahb-path:' + code));
+  const id = Array.prototype.map.call(new Uint8Array(idBuf).slice(0, 16), function (x) { return x.toString(16).padStart(2, '0'); }).join('');
+  const keyBuf = await crypto.subtle.digest('SHA-256', enc.encode('ahb-key:' + code));
+  return { id: id, key: await crypto.subtle.importKey('raw', keyBuf, 'AES-GCM', false, ['encrypt', 'decrypt']) };
+}
+async function gzip(str) {
+  if (!window.CompressionStream) return { z: 0, bytes: new TextEncoder().encode(str) };
+  return { z: 1, bytes: new Uint8Array(await new Response(new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer()) };
+}
+async function gunzip(bytes) { return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text(); }
+async function encDoc(doc) {
+  const g = await gzip(JSON.stringify(doc)); const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, SY.key, g.bytes);
+  return { v: 1, z: g.z, iv: b64(iv), ct: b64(new Uint8Array(ct)) };
+}
+async function decDoc(r) {
+  const pt = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(r.iv) }, SY.key, unb64(r.ct)));
+  return JSON.parse(r.z ? await gunzip(pt) : new TextDecoder().decode(pt));
+}
+function loadScript(src) { return new Promise(function (res, rej) { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = function () { rej(new Error('Firebase niet bereikbaar')); }; document.head.appendChild(sc); }); }
+async function loadFirebase() {
+  if (window.firebase && firebase.initializeApp) return;
+  await loadScript('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js');
+  await loadScript('https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js');
+}
+function syState(msg) { SY.msg = msg; const el = document.getElementById('sync-status'); if (el) el.textContent = msg; }
+function syError(e) {
+  const denied = e && (e.code === 'PERMISSION_DENIED' || /permission/i.test(e.message || ''));
+  syState(denied ? 'Firebase weigert toegang. Zet de regel uit "Firebase-regel" hieronder in de Firebase Console.' : 'Synchroniseren mislukt: ' + (e && e.message ? e.message : e));
+}
+async function syncStart(code) {
+  try {
+    SY.code = code; const k = await syKeys(code); SY.key = k.key;
+    syState('Verbinden…');
+    await loadFirebase();
+    const app = (firebase.apps || []).filter(function (a) { return a.name === 'ahb'; })[0] || firebase.initializeApp(FB_CONFIG, 'ahb');
+    SY.ref = app.database().ref('boodschappen_sync/' + k.id);
+    SY.ref.on('value', onRemote, syError);
+  } catch (e) { syError(e); }
+}
+async function onRemote(snap) {
+  const v = snap.val();
+  if (!v) { if (S.orders.length) syncSchedule(); else syState('Verbonden, nog geen online gegevens.'); return; }
+  if (v.d === deviceId() && v.t === SY.lastT) { syState('Gesynchroniseerd ' + new Date().toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })); return; }
+  try {
+    const doc = await decDoc(v);
+    const by = {}; (doc.orders || []).forEach(function (o) { by[o.date] = o; });
+    const localOnly = S.orders.filter(function (o) { return !by[o.date]; }).length;
+    S.orders.forEach(function (o) { if (!by[o.date]) by[o.date] = o; });
+    if ((doc.t || 0) > (S.t || 0)) { S.cfg = doc.cfg || {}; S.current = doc.current || {}; S.t = doc.t; }
+    S.orders = Object.keys(by).map(function (k) { return by[k]; });
+    save({ remote: true }); render();
+    syState('Gesynchroniseerd ' + new Date().toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' }));
+    if (localOnly > 0 || (S.t || 0) > (doc.t || 0)) syncSchedule();
+  } catch (e) { syState('Online kopie niet te lezen: verkeerde koppelcode?'); }
+}
+function syncSchedule() { if (!SY.ref) return; clearTimeout(SY.timer); SY.timer = setTimeout(syncPush, 1000); }
+async function syncPush() {
+  try {
+    const doc = { orders: S.orders, cfg: S.cfg, current: S.current, t: S.t || Date.now() };
+    const e = await encDoc(doc); e.t = doc.t; e.d = deviceId(); SY.lastT = doc.t;
+    await SY.ref.set(e);
+  } catch (e) { syError(e); }
+}
+function newCode() { return b64(crypto.getRandomValues(new Uint8Array(24))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+async function syncEnable() { const code = newCode(); lsSet(SYNC_KEY, code); await syncStart(code); syncSchedule(); render(); }
+async function syncJoin(text) {
+  const m = /([A-Za-z0-9_-]{24,})\s*$/.exec(text || '');
+  if (!m) return toast('Geen geldige koppelcode');
+  if (SY.code && SY.code !== m[1] && !confirm('Dit apparaat is al gekoppeld. Overschakelen naar deze code?')) return;
+  if (SY.ref) SY.ref.off();
+  lsSet(SYNC_KEY, m[1]); await syncStart(m[1]); render();
+}
+function syncLink() { return location.origin + location.pathname + '#sync=' + SY.code; }
+function syncOff(removeRemote) {
+  if (SY.ref) { SY.ref.off(); if (removeRemote) SY.ref.remove(); }
+  SY = { code: '', ref: null, key: null, timer: null, lastT: 0, msg: '' }; lsSet(SYNC_KEY, ''); render();
+}
+function syncCard() {
+  const card = h('div', { class: 'card' }, [h('h3', { text: 'Synchroniseren tussen apparaten' })]);
+  const body = h('div', { style: 'padding:12px 14px' });
+  body.appendChild(h('p', { class: 'note', id: 'sync-status', style: 'margin:0 0 10px 0', text: SY.code ? (SY.msg || 'Verbinden…') : 'Uit: Chrome en je telefoon delen nu niets.' }));
+  if (!SY.code) {
+    body.appendChild(h('button', { class: 'primary', text: 'Synchronisatie aanzetten', onclick: syncEnable }));
+    const code = h('input', { type: 'text', placeholder: 'Heb je al een koppellink of -code? Plak hem hier' });
+    body.appendChild(code);
+    body.appendChild(h('button', { class: 'secondary', style: 'margin-top:10px', text: 'Koppel met deze link/code', onclick: function () { syncJoin(code.value); } }));
+  } else {
+    body.appendChild(h('button', { class: 'primary', text: 'Kopieer koppellink (voor je andere apparaat)', onclick: function () { copyText(syncLink()); } }));
+    body.appendChild(h('button', { class: 'secondary', text: 'Uitschakelen op dit apparaat', onclick: function () { syncOff(false); } }));
+    body.appendChild(h('button', { class: 'secondary', text: 'Online kopie verwijderen en uitschakelen', onclick: function () { if (confirm('De online (versleutelde) kopie wissen? Andere apparaten houden hun eigen gegevens.')) syncOff(true); } }));
+  }
+  body.appendChild(h('p', { class: 'note', style: 'margin:6px 0 0 0;font-size:12px', text: 'Je gegevens worden in je browser versleuteld voordat ze online gaan. Open de koppellink op je andere apparaat en deel hem met niemand anders: wie hem heeft kan je lijst lezen en wijzigen.' }));
+  body.appendChild(h('details', { style: 'margin-top:8px;font-size:12px;color:var(--gray)' }, [h('summary', { text: 'Firebase-regel (eenmalig, alleen als synchroniseren geweigerd wordt)' }),
+    h('p', { style: 'margin:6px 0' , text: 'Voeg in Firebase Console → Realtime Database → Regels binnen "rules" dit toe (naast je bestaande regels, niet ervoor in de plaats):' }),
+    h('pre', { style: 'white-space:pre-wrap;background:#f6ecec;padding:8px;border-radius:6px;font-size:11px', text: '"boodschappen_sync": {\n  "$id": {\n    ".read": true,\n    ".write": true,\n    ".validate": "newData.hasChildren([\'v\',\'iv\',\'ct\',\'t\'])"\n  }\n}' })]));
+  card.appendChild(body);
+  return card;
+}
 
 // ---------- Gmail-koppeling ----------
 // De app leest zelf de AH-bevestigingsmails (alleen-lezen) via de Gmail-API. Het
@@ -742,6 +860,11 @@ document.querySelectorAll('.tab').forEach(function (t) {
   });
 });
 render();
+(function () {
+  const m = /[#&]sync=([A-Za-z0-9_-]+)/.exec(location.hash);
+  if (m) { history.replaceState(null, '', location.pathname + location.search); syncJoin(m[1]); }
+  else if (lsGet(SYNC_KEY)) syncStart(lsGet(SYNC_KEY));
+})();
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(function () {});
 </script>
 </body>
