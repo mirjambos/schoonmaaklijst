@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Boodschappen</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#2D2827">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Boodschappen">
 <style>
   :root { --brown:#2D2827; --pink:#E0A2A2; --pink-dark:#c98080; --light:#FBF6F6; --gray:#8a8382; --red:#b5504a; --green:#4f8a63; --border:#e8dede; }
   * { box-sizing:border-box; }
@@ -39,6 +44,10 @@
   input[type=text], input[type=number], textarea { width:100%; padding:10px; border:1px solid var(--border); border-radius:6px; font-family:inherit; font-size:14px; }
   .addrow { display:flex; gap:8px; padding:11px 14px; border-top:1px solid var(--border); }
   .addrow button { background:var(--brown); color:#fff; border:none; border-radius:6px; padding:0 14px; font-weight:700; cursor:pointer; }
+  .menu { display:flex; flex-wrap:wrap; gap:6px; padding:8px 14px 12px; background:#fbf6f6; border-top:1px dashed var(--border); }
+  .ctl { display:flex; align-items:center; gap:10px; margin:0 0 14px 0; font-size:13px; color:var(--gray); flex-wrap:wrap; }
+  .ctl select { padding:6px; border:1px solid var(--border); border-radius:6px; font-size:13px; }
+  .bar { height:10px; background:var(--pink-dark); border-radius:5px; }
   .totals { display:flex; justify-content:space-between; padding:12px 14px; border-top:1px solid var(--border); font-weight:700; font-size:14px; }
 </style>
 </head>
@@ -67,9 +76,9 @@
 <script>
 // Alle gegevens blijven in de browser (localStorage). De bestelgeschiedenis staat
 // bewust NIET in deze repo (publiek): importeer hem via tabblad "Data".
-const VERSION = '2026-10-18e';
+const VERSION = '2026-10-18g';
 const KEY = 'ahb_v1';
-const UI = { open: { 'Vaker gekocht': false }, q: '' };
+const UI = { open: { 'Vaker gekocht': false, 'Soms gekocht': false }, q: '', byDept: false, menu: null };
 const DAY = 86400000;
 
 // Producten die je niet elke week koopt maar waar je wel voor wilt waarschuwen,
@@ -224,7 +233,7 @@ function suggestions() {
     }
     const total = Math.round(perUnitDays * last.qty);
     if (!g.cat && total > 90) return; // te zeldzaam om op te attenderen
-    const runout = addDays(last.date, total);
+    const runout = stockOverride(key, last.date, addDays(last.date, total));
     const left = daysBetween(T, runout); // dagen na de bezorging dat het naar verwachting op is
     if (g.cat) {
       if (left > 14) return; // nog genoeg voorraad
@@ -245,18 +254,68 @@ function householdOverview() {
     const ev = g.events; const last = ev[ev.length - 1]; let perUnit;
     if (ev.length >= 3) { const units = ev.slice(0, -1).reduce(function (s, e) { return s + e.qty; }, 0); const span = daysBetween(ev[0].date, last.date); perUnit = units > 0 && span > 0 ? span / units : g.cat.days; }
     else perUnit = g.cat.days / Math.max(1, last.qty);
-    const runout = addDays(last.date, Math.round(perUnit * last.qty));
+    const runout = stockOverride(key, last.date, addDays(last.date, Math.round(perUnit * last.qty)));
     if (daysBetween(runout, today()) > 45) return; // al maanden niet meer gekocht: waarschijnlijk elders
     out.push({ key: key, label: g.cat.label, name: g.name, qty: median(ev.map(function (e) { return e.qty; })), price: g.price, runout: runout, left: daysBetween(T, runout), last: last.date, est: ev.length < 3, n: ev.length });
   });
   return out.sort(function (a, b) { return a.runout < b.runout ? -1 : 1; });
 }
+// "Heb ik nog / elders gekocht": handmatig ingestelde voorraad gaat voor, tot er weer bij AH gekocht is.
+function stockOverride(key, lastDate, runout) {
+  const st = (cfg().stock || {})[key];
+  return st && st.set >= lastDate ? st.until : runout;
+}
+function stockPrompt(key, name) {
+  const v = prompt('Hoeveel weken gaat "' + name + '" nog mee? (0 = op, leeg laten = automatisch)', '');
+  if (v === null) return;
+  const c = cfg(); c.stock = c.stock || {};
+  if (!v.trim()) delete c.stock[key];
+  else { const w = parseFloat(v.replace(',', '.')); if (isNaN(w) || w < 0) return toast('Geen geldig aantal weken'); c.stock[key] = { set: today(), until: addDays(today(), Math.round(w * 7)) }; }
+  save(); render(); toast('Voorraad bijgewerkt');
+}
+
+// Afdelingen, in looproute-volgorde; de eerste regex die past wint.
+const DEPT_ORDER = ['Groente & fruit', 'Brood & ontbijt', 'Zuivel & eieren', 'Vlees & beleg', 'Houdbaar & kruiden', 'Diepvries', 'Snacks & zoet', 'Drank', 'Huishoudelijk', 'Overig'];
+const DEPT_RE = [
+  ['Huishoudelijk', /toiletpapier|^o\.b\.|tampon|vaatwas|afwas|batterij|shampoo|conditioner|andrélon|sanex|nivea|make-up|tandpasta|deodorant|zeep|keukenrol|zakjes|wasmiddel|neusspray|hondenbrokken/i],
+  ['Drank', /bier|weizen|radler|cola\b|fanta|sprite|ice tea|lipton|wijn|chardonnay|seltzer|stëlz|stelz|frisss|chouffe|cider|cassis|siroop|koffie|thee\b|\bsap\b|tripel|abdij/i],
+  ['Diepvries', /gyoza|pizza|kroket|aardappelbol|pom'|frites|diepvries|\bijs\b|mini aardappel/i],
+  ['Snacks & zoet', /chips|lay's|doritos|bugles|knaks|maiswafel|koek|chocola|snoep|red band|drop\b|noten|popcorn|kroepoek|nacho|stroopwafel|galettes|luikse|vlokfeest|vlokken|hagelslag|maoam|bloxx|haribo|amandel/i],
+  ['Zuivel & eieren', /melk|kaas|yoghurt|kwark|eieren|\bei\b|\bboter\b|paturain|geraspt|goudse|belegen|plakken|halvarine|roomboter|crème|creme|sour cream|mozzarella|feta|philadelphia|parmigiano|pecorino|goudkuipje|skyr|\bvla\b|geitenkaas|apetina|mascarpone|soja|plantaardig|grana/i],
+  ['Houdbaar & kruiden', /pasta|rijst|saus|ketchup|mayo|azijn|olie\b|bouillon|soep|noedels|\bmie\b|linguine|fusilli|seasoning|verstegen|santa maria|remia|honig|passata|tomatenpuree|bonen|maiskorrels|salsa|guacamole|dip mix|pesto|kruidenmix|pindakaas|mora|basilicum|tijm|oregano|rozemarijn|koriander|euroma|picadillo|augurk|zuurkool|salade/i],
+  ['Brood & ontbijt', /brood|zaans|spelt|pistolet|\bbol\b|wrap|tortilla|cracotte|beschuit|croissant|jam\b|muesli|havermout|bladerdeeg|broodje/i],
+  ['Vlees & beleg', /kip|rund|gehakt|worst|americain|spek|\bham\b|chorizo|guanciale|burger|braad|schnitzel|vis\b|zalm|tonijn|mergpijp|beleg|shoarma/i],
+  ['Groente & fruit', /komkommer|tomaat|tomaten|paprika|courgette|banaan|bananen|appel|peer\b|avocado|sla\b|rucola|elstar|italiaanse mix|bosui|\bui\b|uien|knoflook|champignon|aardappel|boerenkool|spinazie|wortel|citroen|limoen|bessen|groente|fruit|sperziebonen|broccoli|bloemkool|druif/i]
+];
+function deptOf(name) { for (let i = 0; i < DEPT_RE.length; i++) if (DEPT_RE[i][1].test(name)) return DEPT_RE[i][0]; return 'Overig'; }
+function deptIndex(name) { return DEPT_ORDER.indexOf(deptOf(name)); }
+
+// Producten die vaak samen in dezelfde bestelling zitten, bv. alles voor taco's.
+function coSets() {
+  const hist = history(); const idx = {};
+  hist.forEach(function (o, i) { const seen = {}; o.items.forEach(function (it) { if (seen[it.name]) return; seen[it.name] = 1; (idx[it.name] = idx[it.name] || []).push(i); }); });
+  const names = Object.keys(idx).filter(function (n) { return idx[n].length >= 5 && !defaultFor(n) && cfg().ignored.indexOf(n) < 0; });
+  const par = {}; names.forEach(function (n) { par[n] = n; });
+  function find(x) { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; }
+  for (let i = 0; i < names.length; i++) {
+    const A = new Set(idx[names[i]]);
+    for (let j = i + 1; j < names.length; j++) {
+      let co = 0; idx[names[j]].forEach(function (k) { if (A.has(k)) co++; });
+      if (co >= 4 && co / (A.size + idx[names[j]].length - co) >= 0.6) par[find(names[i])] = find(names[j]);
+    }
+  }
+  const comps = {}; names.forEach(function (n) { (comps[find(n)] = comps[find(n)] || []).push(n); });
+  return Object.keys(comps).map(function (k) { return comps[k]; }).filter(function (m) { return m.length >= 2 && m.length <= 5; })
+    .map(function (m) { m.sort(function (a, b) { return idx[b].length - idx[a].length; }); return { members: m, n: idx[m[0]].length, label: m[0].replace(/^AH /, '') + ' + ' + (m.length - 1) + ' meer' }; })
+    .sort(function (a, b) { return b.n - a.n; }).slice(0, 6);
+}
+
 function defaultFor(name) { return DEFAULT_INTERVALS.filter(function (d) { return d.re.test(name); })[0]; }
 
 // ---------- huidige bestelling ----------
 // Eén lijst met alles wat je kunt bestellen. Standaard en wat (bijna) op is staan aangevinkt;
 // de rest staat klaar om aan te vinken. Zoeken laat ook alles zien wat ooit gekocht is.
-const GROUPS = ['Standaard', 'Waarschijnlijk op', 'Huishoudelijk', 'Vaker gekocht', 'Overige resultaten', 'Extra'];
+const GROUPS = ['Standaard', 'Waarschijnlijk op', 'Huishoudelijk', 'Vaker gekocht', 'Soms gekocht', 'Overige resultaten', 'Extra'];
 function proposalLines(query) {
   const c = cur(); const lines = []; const have = {};
   function push(l) {
@@ -284,6 +343,15 @@ function proposalLines(query) {
     const last = p.events[p.events.length - 1];
     push({ name: p.name, qty: median(p.events.map(function (e) { return e.qty; })), price: p.price, group: 'Vaker gekocht', def: false, reason: p._recent + '× in 6 maanden · laatst ' + nice(last.date) });
   });
+  // Soms gekocht: minstens 2 keer in het afgelopen jaar, meest gekochte eerst
+  const yearAgo = addDays(today(), -365);
+  Object.keys(stats).map(function (n) { return stats[n]; }).filter(function (p) {
+    p._year = p.events.filter(function (e) { return e.date >= yearAgo; }).length;
+    return p._year >= 2 && !defaultFor(p.name) && cfg().ignored.indexOf(p.name) < 0;
+  }).sort(function (a, b) { return b._year - a._year || (a.events[a.events.length - 1].date < b.events[b.events.length - 1].date ? 1 : -1); }).forEach(function (p) {
+    const last = p.events[p.events.length - 1];
+    push({ name: p.name, qty: median(p.events.map(function (e) { return e.qty; })), price: p.price, group: 'Soms gekocht', def: false, reason: p._year + '× in 12 maanden · laatst ' + nice(last.date) });
+  });
   Object.keys(c.adds).forEach(function (name) {
     push({ name: name, qty: c.adds[name], price: (stats[name] || {}).price || 0, group: 'Extra', def: true, reason: 'zelf toegevoegd' });
   });
@@ -298,7 +366,10 @@ function proposalLines(query) {
   }
   return lines;
 }
-function orderLines() { return proposalLines('').filter(function (l) { return l.checked; }); }
+function orderLines() {
+  const m = cur().mult || 1;
+  return proposalLines('').filter(function (l) { return l.checked; }).map(function (l) { return Object.assign({}, l, { qty: m === 1 ? l.qty : Math.ceil(l.qty * m) }); });
+}
 function ahUrl(name) { return 'https://www.ah.nl/zoeken?query=' + encodeURIComponent(name.replace(/^AH /, '')); }
 
 function render() {
@@ -310,8 +381,7 @@ function pinned(name) { return (cfg().links || {})[name] || ''; }
 // AH-productlinks staan niet in de bevestigingsmails. Plak hem eenmalig (bijv. via Delen in de AH-app of uit ah.nl),
 // dan opent de knop voortaan rechtstreeks dat product.
 function pinLink(name) {
-  const cur_ = pinned(name);
-  const v = prompt('Plak de AH-productlink voor "' + name + '" (leeg laten om te wissen):', cur_);
+  const v = prompt('Plak de AH-productlink voor "' + name + '" (leeg laten om te wissen):', pinned(name));
   if (v === null) return;
   const t = v.trim(); const c = cfg(); c.links = c.links || {};
   if (!t) delete c.links[name];
@@ -319,62 +389,117 @@ function pinLink(name) {
   else c.links[name] = t;
   save(); render();
 }
-function lineRow(l, onRemove) {
-  const c = cur();
-  const kids = [
-    h('input', { type: 'checkbox', onchange: function (e) { c.sel[l.name] = e.target.checked; save(); render(); } }),
-    h('div', { class: 'name' }, [l.name, h('span', { class: 'sub', text: (l.price ? eur(l.price) + ' per stuk' : '') + (l.reason ? (l.price ? ' · ' : '') + l.reason : '') })]),
-    qtyCtl(l.name, l.qty, function (q) { c.qty[l.name] = q; if (l.group === 'Extra') c.adds[l.name] = q; save(); render(); }),
-    h('a', { class: 'ah', href: pinned(l.name) || ahUrl(l.name), target: '_blank', rel: 'noopener', text: pinned(l.name) ? 'Product' : 'Zoek', title: l.name + (pinned(l.name) ? ' (vastgezet AH-product)' : ' (zoekt op ah.nl)') }),
-    h('button', { class: 'btn-sm', title: 'Zet de AH-productlink vast voor ' + l.name, text: '🔗', onclick: function () { pinLink(l.name); } })
-  ];
-  if (onRemove) kids.push(h('button', { class: 'btn-sm', title: 'Verwijderen of niet meer voorstellen', text: '✕', onclick: function () { onRemove(l); } }));
-  const row = h('div', { class: 'row' + (l.checked ? '' : ' done') }, kids);
-  row.querySelector('input').checked = l.checked;
-  return row;
+function note(name) { return (cfg().notes || {})[name] || ''; }
+function noteFor(name) {
+  const v = prompt('Notitie bij "' + name + '" (bijv. rijp, grote verpakking; leeg = wissen):', note(name));
+  if (v === null) return;
+  const c = cfg(); c.notes = c.notes || {};
+  if (!v.trim()) delete c.notes[name]; else c.notes[name] = v.trim();
+  save(); render();
 }
-function groupCard(group, gl, removeFn, collapsible) {
+function ignoreFn(l) { if (confirm('"' + l.name + '" niet meer voorstellen?')) { cfg().ignored.push(l.key || l.name); UI.menu = null; save(); render(); } }
+
+function lineRow(l) {
+  const c = cur(); const url = pinned(l.name);
+  const sub = (l.price ? eur(l.price) + ' per stuk' : '') + (l.reason ? (l.price ? ' · ' : '') + l.reason : '') + (note(l.name) ? ' · 📝 ' + note(l.name) : '');
+  const row = h('div', { class: 'row' + (l.checked ? '' : ' done') }, [
+    h('input', { type: 'checkbox', onchange: function (e) { c.sel[l.name] = e.target.checked; save(); render(); } }),
+    h('div', { class: 'name' }, [l.name, h('span', { class: 'sub', text: sub })]),
+    qtyCtl(l.name, l.qty, function (q) { c.qty[l.name] = q; if (l.group === 'Extra') c.adds[l.name] = q; save(); render(); }),
+    h('a', { class: 'ah', href: url || ahUrl(l.name), target: '_blank', rel: 'noopener', text: url ? 'Product' : 'Zoek', title: l.name + (url ? ' (vastgezet AH-product)' : ' (zoekt op ah.nl)') }),
+    h('button', { class: 'btn-sm', title: 'Meer opties', text: '⋯', onclick: function () { UI.menu = UI.menu === l.name ? null : l.name; render(); } })
+  ]);
+  row.querySelector('input').checked = l.checked;
+  const wrap = h('div', {}, [row]);
+  if (UI.menu === l.name) {
+    const items = [h('button', { class: 'btn-sm', text: '📝 Notitie', onclick: function () { noteFor(l.name); } }),
+      h('button', { class: 'btn-sm', text: '🔗 AH-link vastzetten', onclick: function () { pinLink(l.name); } })];
+    if (l.key) items.push(h('button', { class: 'btn-sm', text: '📦 Heb ik nog / elders gekocht', onclick: function () { stockPrompt(l.key, l.name); } }));
+    if (l.group === 'Extra') items.push(h('button', { class: 'btn-sm', text: '✕ Verwijderen', onclick: function () { delete c.adds[l.name]; delete c.sel[l.name]; UI.menu = null; save(); render(); } }));
+    else items.push(h('button', { class: 'btn-sm', text: '🚫 Niet meer voorstellen', onclick: function () { ignoreFn(l); } }));
+    wrap.appendChild(h('div', { class: 'menu' }, items));
+  }
+  return wrap;
+}
+function groupCard(group, gl, collapsible) {
   const n = gl.filter(function (l) { return l.checked; }).length;
   const open = UI.q.trim() ? true : UI.open[group] !== false;
   const head = h('h3', { text: (collapsible ? (open ? '▾ ' : '▸ ') : '') + group + (gl.length ? ' (' + n + '/' + gl.length + ')' : ''), style: collapsible ? 'cursor:pointer' : '' });
   if (collapsible) head.addEventListener('click', function () { UI.open[group] = !open; render(); });
   const card = h('div', { class: 'card' }, [head]);
-  if (open) gl.forEach(function (l) { card.appendChild(lineRow(l, removeFn)); });
+  if (open) gl.forEach(function (l) { card.appendChild(lineRow(l)); });
   return card;
 }
-function ignoreFn(l) { if (confirm('"' + l.name + '" niet meer voorstellen?')) { cfg().ignored.push(l.key || l.name); save(); render(); } }
+function addRow() {
+  const c = cur(); const add = h('input', { type: 'text', placeholder: 'Extra product toevoegen…' });
+  return h('div', { class: 'addrow' }, [add, h('button', { text: '+', onclick: function () { const t = add.value.trim(); if (!t) return; c.adds[t] = 1; save(); render(); } })]);
+}
+function setsCard(lines) {
+  const sets = coSets(); if (!sets.length) return null;
+  const c = cur(); const byName = {}; lines.forEach(function (l) { byName[l.name] = l; });
+  const card = h('div', { class: 'card' }, [h('h3', { text: 'Vaak samen gekocht' })]);
+  sets.forEach(function (st) {
+    const all = st.members.every(function (m) { return byName[m] && byName[m].checked; });
+    const row = h('div', { class: 'row' }, [
+      h('input', { type: 'checkbox', onchange: function (e) {
+        st.members.forEach(function (m) { c.sel[m] = e.target.checked; if (!byName[m]) c.adds[m] = 1; });
+        save(); render(); } }),
+      h('div', { class: 'name' }, [st.label, h('span', { class: 'sub', text: st.members.join(', ') + ' · ' + st.n + '× samen/los gekocht' })])
+    ]);
+    row.querySelector('input').checked = all;
+    card.appendChild(row);
+  });
+  return card;
+}
 
 function renderOrder() {
   const top = document.getElementById('order-top'); const v = document.getElementById('order-list'); v.textContent = '';
-  const lines = proposalLines(UI.q); const c = cur();
-  const picked = orderLines(); // alle aangevinkte regels, ook als het zoekfilter ze verbergt
+  const lines = proposalLines(UI.q); const c = cur(); const picked = orderLines();
   document.getElementById('n-order').textContent = picked.length ? picked.length : '';
   if (!top.firstChild) {
     top.appendChild(h('button', { class: 'secondary', id: 'gm-quick', style: 'display:none', text: 'Laatste bestelling uit Gmail ophalen', onclick: function () { gmailSync(14); } }));
     top.appendChild(h('p', { class: 'note', text: 'Vink aan wat je deze week wilt bestellen en pas de aantallen aan. Daarna kopieer je de lijst en zet je hem in de Albert Heijn-app.' }));
-    const q = h('input', { type: 'text', placeholder: 'Zoek in alles wat je ooit bestelde…', style: 'margin-bottom:14px' });
+    const q = h('input', { type: 'text', placeholder: 'Zoek in alles wat je ooit bestelde…', style: 'margin-bottom:12px' });
     q.addEventListener('input', function () { UI.q = q.value; renderOrder(); });
     top.appendChild(q);
+    const dept = h('input', { type: 'checkbox', id: 'by-dept' });
+    dept.addEventListener('change', function () { UI.byDept = dept.checked; renderOrder(); });
+    const mult = h('select', { id: 'mult' }, [h('option', { value: '1', text: '× 1' }), h('option', { value: '1.5', text: '× 1,5' }), h('option', { value: '2', text: '× 2' }), h('option', { value: '3', text: '× 3' })]);
+    mult.addEventListener('change', function () { cur().mult = parseFloat(mult.value); save(); render(); });
+    top.appendChild(h('div', { class: 'ctl' }, [h('label', {}, [dept, ' Sorteer op afdeling']), h('span', { text: '· Gasten/borrel, aantallen:' }), mult]));
   }
   top.querySelector('#gm-quick').style.display = gmClient() ? 'block' : 'none';
+  top.querySelector('#by-dept').checked = UI.byDept;
+  top.querySelector('#mult').value = String(c.mult || 1);
   if (!S.orders.length) { v.appendChild(h('div', { class: 'empty', text: 'Nog geen bestelgeschiedenis. Ga naar tabblad "Data" om die te importeren.' })); return; }
-  GROUPS.forEach(function (group) {
-    const gl = lines.filter(function (l) { return l.group === group; });
-    if (!gl.length && group !== 'Extra') return;
-    const card = groupCard(group, gl, group === 'Extra' ? function (l) { delete c.adds[l.name]; delete c.sel[l.name]; save(); render(); } : (group === 'Waarschijnlijk op' || group === 'Huishoudelijk' ? ignoreFn : null), group === 'Vaker gekocht');
-    if (group === 'Extra') {
-      const add = h('input', { type: 'text', placeholder: 'Extra product toevoegen…' });
-      card.appendChild(h('div', { class: 'addrow' }, [add, h('button', { text: '+', onclick: function () { const t = add.value.trim(); if (!t) return; c.adds[t] = 1; save(); render(); } })]));
-    }
-    v.appendChild(card);
-  });
+  const searching = !!UI.q.trim();
+  if (UI.byDept) {
+    const keep = lines.filter(function (l) { return searching || l.checked || ['Standaard', 'Waarschijnlijk op', 'Huishoudelijk', 'Extra'].indexOf(l.group) >= 0; });
+    DEPT_ORDER.forEach(function (d) {
+      const gl = keep.filter(function (l) { return deptOf(l.name) === d; });
+      if (gl.length) v.appendChild(groupCard(d, gl, false));
+    });
+    v.appendChild(h('div', { class: 'card' }, [addRow()]));
+  } else {
+    if (!searching) { const sc = setsCard(proposalLines('')); if (sc) v.appendChild(sc); }
+    GROUPS.forEach(function (group) {
+      const gl = lines.filter(function (l) { return l.group === group; });
+      if (!gl.length && group !== 'Extra') return;
+      const card = groupCard(group, gl, group === 'Vaker gekocht' || group === 'Soms gekocht');
+      if (group === 'Extra') card.appendChild(addRow());
+      v.appendChild(card);
+    });
+  }
   let total = 0; picked.forEach(function (l) { total += l.qty * l.price; });
-  v.appendChild(h('div', { class: 'card' }, [h('div', { class: 'totals', style: 'border-top:none' }, [h('span', { text: picked.length + ' producten geselecteerd' }), h('span', { text: '≈ ' + eur(total) })])]));
+  v.appendChild(h('div', { class: 'card' }, [h('div', { class: 'totals', style: 'border-top:none' }, [h('span', { text: picked.length + ' producten geselecteerd' + ((c.mult || 1) !== 1 ? ' (× ' + c.mult + ')' : '') }), h('span', { text: '≈ ' + eur(total) })])]));
   v.appendChild(h('button', { class: 'primary', text: 'Kopieer naar AH-app (' + picked.length + ')', onclick: function () { if (!picked.length) return toast('Niets geselecteerd'); copyText(listText(picked)); } }));
   if (navigator.share) v.appendChild(h('button', { class: 'secondary', text: 'Deel lijst…', onclick: function () { navigator.share({ title: 'Boodschappen', text: listText(picked) }).catch(function () {}); } }));
   v.appendChild(h('button', { class: 'secondary', text: 'Bestelling is geplaatst — leer hiervan', onclick: placeOrder }));
 }
-function listText(lines) { return 'Boodschappen ' + nice(nextDelivery()) + '\n' + lines.map(function (l) { return l.qty + 'x ' + l.name; }).join('\n'); }
+function listText(lines) {
+  const ls = UI.byDept ? lines.map(function (l, i) { return { l: l, i: i }; }).sort(function (x, y) { return deptIndex(x.l.name) - deptIndex(y.l.name) || x.i - y.i; }).map(function (x) { return x.l; }) : lines;
+  return 'Boodschappen ' + nice(nextDelivery()) + '\n' + ls.map(function (l) { return l.qty + 'x ' + l.name + (note(l.name) ? ' (' + note(l.name) + ')' : ''); }).join('\n');
+}
 function copyText(t) {
   if (navigator.clipboard) navigator.clipboard.writeText(t).then(function () { toast('Lijst gekopieerd'); }, function () { toast('Kopiëren mislukt'); });
   else toast('Kopiëren niet ondersteund');
@@ -404,7 +529,7 @@ function renderSuggest() {
   v.appendChild(h('p', { class: 'note', text: 'Wat naar verwachting (bijna) op is, op basis van eerdere aankopen. Vink direct aan wat je wilt bestellen; het staat dan ook in tabblad Bestelling. Standaard aangevinkt als het binnen een week op is. "Schatting" = te weinig historie, er is een standaardverbruik aangenomen.' }));
   ['Waarschijnlijk op', 'Huishoudelijk'].forEach(function (group) {
     const gl = exp.filter(function (l) { return l.group === group; }).sort(function (a, b) { return (a.reason < b.reason) ? -1 : 1; });
-    if (gl.length) v.appendChild(groupCard(group, gl, ignoreFn, false));
+    if (gl.length) v.appendChild(groupCard(group, gl, false));
   });
   if (!exp.length) v.appendChild(h('div', { class: 'empty', text: 'Op dit moment lijkt niets op te raken.' }));
 }
@@ -435,6 +560,21 @@ function renderData() {
   v.appendChild(h('p', { class: 'note', text: hist.length ? 'Versie ' + VERSION + ' · ' + hist.length + ' bestellingen geladen (' + hist[0].date + ' t/m ' + hist[hist.length - 1].date + '). Alles staat alleen in deze browser.' : 'Nog geen bestellingen geladen.' }));
   const file = h('input', { type: 'file', accept: 'application/json,.json', style: 'display:none', onchange: function (e) { importFile(e.target.files[0]); } });
   v.appendChild(file);
+  if (hist.length) {
+    const tot = function (o) { return o.items.reduce(function (a, i) { return a + i.qty * i.price; }, 0); };
+    const last = hist.slice(-12); const max = Math.max.apply(null, last.map(tot));
+    const ucard = h('div', { class: 'card' }, [h('h3', { text: 'Uitgaven (bruto, vóór bonus en statiegeld)' })]);
+    ucard.appendChild(h('div', { style: 'padding:12px 14px 4px;font-size:13px;color:var(--gray)', text: 'Gemiddeld per bestelling (laatste ' + last.length + '): ' + eur(last.reduce(function (a, o) { return a + tot(o); }, 0) / last.length) }));
+    last.forEach(function (o) {
+      const t = tot(o);
+      ucard.appendChild(h('div', { style: 'display:flex;align-items:center;gap:8px;padding:3px 14px;font-size:12px' }, [h('span', { style: 'width:46px;color:var(--gray)', text: o.date.slice(5).split('-').reverse().join('-') }), h('div', { style: 'flex:1' }, [h('div', { class: 'bar', style: 'width:' + Math.max(3, Math.round(100 * t / max)) + '%' })]), h('span', { style: 'width:64px;text-align:right', text: eur(t) })]));
+    });
+    const months = {}; hist.forEach(function (o) { const k = o.date.slice(0, 7); const m = months[k] || (months[k] = { n: 0, t: 0 }); m.n++; m.t += tot(o); });
+    ucard.appendChild(h('div', { style: 'padding:10px 14px 4px;font-size:12px;font-weight:700', text: 'Per maand' }));
+    Object.keys(months).sort().reverse().slice(0, 12).forEach(function (k) { ucard.appendChild(h('div', { style: 'display:flex;justify-content:space-between;padding:3px 14px;font-size:12px' }, [h('span', { text: k + ' · ' + months[k].n + ' bestellingen' }), h('span', { text: eur(months[k].t) })])); });
+    ucard.appendChild(h('div', { style: 'height:10px' }));
+    v.appendChild(ucard);
+  }
   const gcard = h('div', { class: 'card' }, [h('h3', { text: 'Gmail-koppeling' })]);
   const cid = h('input', { type: 'text', placeholder: 'Google client-ID (….apps.googleusercontent.com)', value: gmClient() });
   cid.addEventListener('change', function () { try { localStorage.setItem(GM_KEY, cid.value.trim()); } catch (e) {} toast('Client-ID opgeslagen'); });
@@ -602,6 +742,7 @@ document.querySelectorAll('.tab').forEach(function (t) {
   });
 });
 render();
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(function () {});
 </script>
 </body>
 </html>
