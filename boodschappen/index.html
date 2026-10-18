@@ -287,6 +287,7 @@ function renderOrder() {
   const picked = lines.filter(function (l) { return l.checked; });
   document.getElementById('n-order').textContent = picked.length ? picked.length : '';
   if (!S.orders.length) { v.appendChild(h('div', { class: 'empty', text: 'Nog geen bestelgeschiedenis. Ga naar tabblad "Data" om die te importeren.' })); return; }
+  if (gmClient()) v.appendChild(h('button', { class: 'secondary', text: 'Laatste bestelling uit Gmail ophalen', onclick: function () { gmailSync(14); } }));
   v.appendChild(h('p', { class: 'note', text: 'Vink aan wat je deze week wilt bestellen en pas de aantallen aan. Daarna kopieer je de lijst en zet je hem in de Albert Heijn-app.' }));
   ['Standaard', 'Waarschijnlijk op', 'Extra'].forEach(function (group) {
     const gl = lines.filter(function (l) { return l.group === group; });
@@ -389,6 +390,21 @@ function renderData() {
   v.appendChild(h('p', { class: 'note', text: hist.length ? hist.length + ' bestellingen geladen (' + hist[0].date + ' t/m ' + hist[hist.length - 1].date + '). Alles staat alleen in deze browser.' : 'Nog geen bestellingen geladen.' }));
   const file = h('input', { type: 'file', accept: 'application/json,.json', style: 'display:none', onchange: function (e) { importFile(e.target.files[0]); } });
   v.appendChild(file);
+  const gcard = h('div', { class: 'card' }, [h('h3', { text: 'Gmail-koppeling' })]);
+  const cid = h('input', { type: 'text', placeholder: 'Google client-ID (….apps.googleusercontent.com)', value: gmClient() });
+  cid.addEventListener('change', function () { try { localStorage.setItem(GM_KEY, cid.value.trim()); } catch (e) {} toast('Client-ID opgeslagen'); });
+  const per = h('select', { id: 'gm-days', style: 'width:100%;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:14px;margin-top:8px' }, [
+    h('option', { value: '14', text: 'Laatste 2 weken' }), h('option', { value: '100', text: 'Laatste 3 maanden' }), h('option', { value: '365', text: 'Laatste 12 maanden' })]);
+  gcard.appendChild(h('div', { style: 'padding:12px 14px' }, [cid, per,
+    h('button', { class: 'primary', style: 'margin-top:10px', text: 'Haal bestellingen op uit Gmail', onclick: function () { cid.dispatchEvent(new Event('change')); gmailSync(+per.value); } }),
+    h('p', { class: 'note', id: 'gmail-status', style: 'margin:0', text: 'De app leest alleen de AH-bevestigingsmails (alleen-lezen) en bewaart ze alleen in deze browser.' }),
+    h('details', { style: 'margin-top:10px;font-size:13px;color:var(--gray)' }, [h('summary', { text: 'Eenmalig instellen' }),
+      h('ol', { style: 'padding-left:18px;line-height:1.5' }, [
+        h('li', { text: 'Ga naar console.cloud.google.com, maak een project en zet de Gmail API aan.' }),
+        h('li', { text: 'OAuth-toestemmingsscherm: type Extern, status Testen, voeg je Gmail-adres toe als testgebruiker.' }),
+        h('li', { text: 'Inloggegevens: maak een OAuth-client-ID van het type Webtoepassing met bij "Geautoriseerde JavaScript-bronnen" exact: https://mirjambos.github.io' }),
+        h('li', { text: 'Plak het client-ID hierboven. Bij het inloggen zegt Google dat de app niet geverifieerd is: kies Geavanceerd en ga door (het is je eigen app).' })])])]));
+  v.appendChild(gcard);
   v.appendChild(h('button', { class: 'primary', text: 'Bestelgeschiedenis importeren (.json)', onclick: function () { file.click(); } }));
   v.appendChild(h('button', { class: 'secondary', text: 'Alles exporteren (back-up / ander apparaat)', onclick: exportAll }));
   v.appendChild(h('button', { class: 'secondary', text: 'Alles wissen', onclick: function () { if (confirm('Alle gegevens in deze browser wissen?')) { S = { orders: [], cfg: {}, current: {} }; save(); render(); } } }));
@@ -414,6 +430,124 @@ function exportAll() {
   const blob = new Blob([JSON.stringify({ orders: S.orders, cfg: S.cfg }, null, 1)], { type: 'application/json' });
   const a = h('a', { href: URL.createObjectURL(blob), download: 'ah-boodschappen-' + today() + '.json' });
   document.body.appendChild(a); a.click(); a.remove();
+}
+
+
+// ---------- Gmail-koppeling ----------
+// De app leest zelf de AH-bevestigingsmails (alleen-lezen) via de Gmail-API. Het
+// OAuth client-ID staat in localStorage van deze browser, niet in de repo.
+const GM_KEY = 'ahb_gmail_client';
+const MONTHS = ['januari','februari','maart','april','mei','juni','juli','augustus','september','oktober','november','december'];
+function gmClient() { try { return localStorage.getItem(GM_KEY) || ''; } catch (e) { return ''; } }
+function b64u(str) {
+  const bin = atob(str.replace(/-/g, '+').replace(/_/g, '/'));
+  return new TextDecoder().decode(Uint8Array.from(bin, function (c) { return c.charCodeAt(0); }));
+}
+function num(t) { return parseFloat(String(t).replace(',', '.')); }
+function subjectDate(subject) {
+  const m = new RegExp('(\\d{1,2})\\s+(' + MONTHS.join('|') + ')\\s+(\\d{4})', 'i').exec(subject || '');
+  if (!m) return null;
+  return m[3] + '-' + String(MONTHS.indexOf(m[2].toLowerCase()) + 1).padStart(2, '0') + '-' + String(+m[1]).padStart(2, '0');
+}
+// Productrijen staan in <tr> met precies 4 <td>: naam | aantal | prijs | totaal.
+// Sectierijen ("Albert Heijn", "Gratis toegevoegd") hebben lege cellen; gratis items slaan we over.
+function parseOrderHtml(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const items = []; let total = null, free = false;
+  Array.prototype.forEach.call(doc.querySelectorAll('tr'), function (tr) {
+    if (tr.querySelector('tr')) return;
+    const cells = Array.prototype.filter.call(tr.children, function (c) { return c.tagName === 'TD'; });
+    if (cells.length !== 4) return;
+    const t = cells.map(function (c) { return c.textContent.replace(/[\s ]+/g, ' ').trim(); });
+    if (/^Gratis toegevoegd/i.test(t[0]) && !t[1]) { free = true; return; }
+    if (/^Boodschappen totaal/i.test(t[0])) { total = num(t[3]); return; }
+    if (!t[1] && !t[2]) { if (t[0]) free = false; return; }
+    if (!/^\d+$/.test(t[1]) || !/^\d+[.,]\d{2}$/.test(t[2])) return;
+    const price = num(t[2]);
+    if (free || price === 0) return;
+    items.push({ name: t[0], qty: parseInt(t[1], 10), price: price });
+  });
+  const sum = items.reduce(function (a, i) { return a + i.qty * i.price; }, 0);
+  return { items: items, total: total, sum: Math.round(sum * 100) / 100 };
+}
+function findBody(part, out) {
+  out = out || { html: '', text: '' };
+  if (!part) return out;
+  if (part.body && part.body.data) {
+    if (part.mimeType === 'text/html' && !out.html) out.html = b64u(part.body.data);
+    else if (part.mimeType === 'text/plain' && !out.text) out.text = b64u(part.body.data);
+  }
+  (part.parts || []).forEach(function (p) { findBody(p, out); });
+  return out;
+}
+function gmToken(clientId) {
+  return new Promise(function (resolve, reject) {
+    function go() {
+      try {
+        google.accounts.oauth2.initTokenClient({
+          client_id: clientId, scope: 'https://www.googleapis.com/auth/gmail.readonly',
+          callback: function (r) { if (r.error || !r.access_token) reject(new Error(r.error_description || r.error || 'geen toegang')); else resolve(r.access_token); },
+          error_callback: function (e) { reject(new Error(e.type || 'inloggen geannuleerd')); }
+        }).requestAccessToken();
+      } catch (e) { reject(e); }
+    }
+    if (window.google && google.accounts && google.accounts.oauth2) return go();
+    const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client';
+    sc.onload = go; sc.onerror = function () { reject(new Error('Google-inlogscript niet bereikbaar')); };
+    document.head.appendChild(sc);
+  });
+}
+function gmGet(path, token) {
+  return fetch('https://gmail.googleapis.com/gmail/v1/users/me/' + path, { headers: { Authorization: 'Bearer ' + token } }).then(function (r) {
+    if (!r.ok) throw new Error('Gmail antwoordde ' + r.status);
+    return r.json();
+  });
+}
+function gmStatus(t) { const el = document.getElementById('gmail-status'); if (el) el.textContent = t; }
+
+async function gmailSync(days) {
+  const clientId = gmClient();
+  if (!clientId) { toast('Vul eerst je Google client-ID in (tabblad Data)'); return; }
+  gmStatus('Inloggen bij Google…');
+  try {
+    const token = await gmToken(clientId);
+    gmStatus('Bevestigingsmails zoeken…');
+    const q = 'from:bestellingen@ah.nl subject:"Bedankt voor jouw bestelling" newer_than:' + days + 'd';
+    let ids = [], page = '';
+    do {
+      const r = await gmGet('messages?maxResults=100&q=' + encodeURIComponent(q) + (page ? '&pageToken=' + page : ''), token);
+      ids = ids.concat((r.messages || []).map(function (m) { return m.id; })); page = r.nextPageToken || '';
+    } while (page);
+    if (!ids.length) { gmStatus('Geen bevestigingsmails gevonden in de laatste ' + days + ' dagen.'); return; }
+    const best = {}; const t0 = today();
+    for (let i = 0; i < ids.length; i += 5) {
+      gmStatus('Mails lezen… ' + Math.min(i + 5, ids.length) + '/' + ids.length);
+      const batch = await Promise.all(ids.slice(i, i + 5).map(function (id) { return gmGet('messages/' + id + '?format=full', token); }));
+      batch.forEach(function (m) {
+        const subj = ((m.payload.headers || []).filter(function (h2) { return h2.name.toLowerCase() === 'subject'; })[0] || {}).value;
+        const date = subjectDate(subj);
+        if (!date || date > t0) return; // toekomstige bezorgdata zijn nog wijzigbaar
+        const ts = +m.internalDate || 0;
+        if (!best[date] || ts > best[date].ts) best[date] = { ts: ts, payload: m.payload };
+      });
+    }
+    const added = []; const warn = [];
+    Object.keys(best).sort().forEach(function (date) {
+      const body = findBody(best[date].payload);
+      const r = body.html ? parseOrderHtml(body.html) : { items: [], total: null, sum: 0 };
+      if (!r.items.length) { warn.push(date + ': geen producten gevonden'); return; }
+      if (r.total !== null && Math.abs(r.total - r.sum) > 0.02) warn.push(date + ': som ' + eur(r.sum) + ' wijkt af van mail ' + eur(r.total));
+      added.push({ date: date, items: r.items });
+    });
+    if (added.length) {
+      const byDate = {}; S.orders.forEach(function (o) { byDate[o.date] = o; });
+      added.forEach(function (o) { byDate[o.date] = o; });
+      S.orders = Object.keys(byDate).map(function (k) { return byDate[k]; });
+      save(); render();
+    }
+    gmStatus(added.length + ' bestelling(en) bijgewerkt' + (added.length ? ' (t/m ' + added[added.length - 1].date + ')' : '') + (warn.length ? '. Let op: ' + warn.join('; ') : '.'));
+    toast(added.length + ' bestelling(en) opgehaald');
+  } catch (e) { gmStatus('Mislukt: ' + e.message); toast('Gmail ophalen mislukt'); }
 }
 
 document.querySelectorAll('.tab').forEach(function (t) {
