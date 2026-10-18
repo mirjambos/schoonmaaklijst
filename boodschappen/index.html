@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boodschappen</title>
+<style>
+  :root { --brown:#2D2827; --pink:#E0A2A2; --pink-dark:#c98080; --light:#FBF6F6; --gray:#8a8382; --red:#b5504a; --green:#4f8a63; --border:#e8dede; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:Arial,"Open Sans",sans-serif; background:var(--light); color:var(--brown); }
+  header { background:var(--brown); color:var(--light); padding:16px; }
+  header h1 { margin:0 0 4px 0; font-size:20px; }
+  header p { margin:0; font-size:13px; color:var(--pink); }
+  .tabs { display:flex; background:#fff; border-bottom:2px solid var(--border); position:sticky; top:0; z-index:10; }
+  .tab { flex:1; padding:13px 4px; text-align:center; font-weight:700; font-size:13px; color:var(--gray); cursor:pointer; border-bottom:3px solid transparent; }
+  .tab.active { color:var(--brown); border-bottom-color:var(--pink); }
+  .tab .n { background:var(--pink-dark); color:#fff; border-radius:9px; padding:1px 6px; font-size:11px; margin-left:3px; }
+  .container { max-width:640px; margin:0 auto; padding:16px; }
+  .view { display:none; } .view.active { display:block; }
+  .card { background:#fff; border:1px solid var(--border); border-radius:10px; margin-bottom:16px; overflow:hidden; }
+  .card h3 { margin:0; padding:10px 14px; font-size:13px; text-transform:uppercase; letter-spacing:.03em; background:#f6ecec; }
+  .row { display:flex; align-items:center; gap:10px; padding:11px 14px; border-top:1px solid var(--border); }
+  .row .name { flex:1; font-size:14.5px; line-height:1.35; }
+  .row .sub { display:block; font-size:11px; color:var(--gray); margin-top:2px; }
+  .row.done .name { text-decoration:line-through; color:var(--gray); }
+  .row input[type=checkbox] { width:20px; height:20px; accent-color:var(--pink-dark); flex-shrink:0; }
+  .qty { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+  .qty button, .btn-sm { background:#fff; border:1px solid var(--border); border-radius:6px; padding:4px 9px; font-size:14px; cursor:pointer; }
+  .qty span { min-width:18px; text-align:center; font-weight:700; }
+  a.ah { font-size:12px; color:var(--pink-dark); text-decoration:none; border:1px solid var(--pink); border-radius:6px; padding:4px 7px; flex-shrink:0; }
+  button.primary { width:100%; padding:14px; background:var(--brown); color:#fff; border:none; border-radius:8px; font-size:15px; font-weight:700; cursor:pointer; margin-bottom:10px; }
+  button.secondary { width:100%; padding:12px; background:#fff; color:var(--brown); border:1px solid var(--brown); border-radius:8px; font-size:14px; font-weight:700; cursor:pointer; margin-bottom:10px; }
+  .badge { font-size:10px; font-weight:700; color:#fff; padding:2px 6px; border-radius:8px; margin-left:6px; white-space:nowrap; }
+  .b-red { background:var(--red); } .b-orange { background:#d08a3c; } .b-gray { background:var(--gray); }
+  .note { font-size:13px; color:var(--gray); line-height:1.5; margin:0 0 14px 0; }
+  .empty { text-align:center; padding:28px 14px; color:var(--gray); font-size:14px; }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--brown); color:#fff; padding:12px 18px; border-radius:8px; font-size:14px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:100; }
+  .toast.show { opacity:1; }
+  input[type=text], input[type=number], textarea { width:100%; padding:10px; border:1px solid var(--border); border-radius:6px; font-family:inherit; font-size:14px; }
+  .addrow { display:flex; gap:8px; padding:11px 14px; border-top:1px solid var(--border); }
+  .addrow button { background:var(--brown); color:#fff; border:none; border-radius:6px; padding:0 14px; font-weight:700; cursor:pointer; }
+  .totals { display:flex; justify-content:space-between; padding:12px 14px; border-top:1px solid var(--border); font-weight:700; font-size:14px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Boodschappen</h1>
+  <p id="next-delivery">Laden...</p>
+</header>
+
+<div class="tabs">
+  <div class="tab active" data-tab="order">Bestelling<span class="n" id="n-order"></span></div>
+  <div class="tab" data-tab="suggest">Waarschijnlijk op<span class="n" id="n-suggest"></span></div>
+  <div class="tab" data-tab="standard">Standaard</div>
+  <div class="tab" data-tab="data">Data</div>
+</div>
+
+<div class="container">
+  <div id="order-view" class="view active"></div>
+  <div id="suggest-view" class="view"></div>
+  <div id="standard-view" class="view"></div>
+  <div id="data-view" class="view"></div>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+// Alle gegevens blijven in de browser (localStorage). De bestelgeschiedenis staat
+// bewust NIET in deze repo (publiek): importeer hem via tabblad "Data".
+const KEY = 'ahb_v1';
+const DAY = 86400000;
+
+// Producten die je niet elke week koopt maar waar je wel voor wilt waarschuwen,
+// ook als er (nog) maar één aankoop bekend is. Interval = geschatte dagen per aankoop.
+const DEFAULT_INTERVALS = [
+  { re: /toiletpapier/i, days: 30, label: 'wc-papier' },
+  { re: /^o\.b\.|tampon/i, days: 30, label: 'tampons' },
+  { re: /vaatwastablet/i, days: 45, label: 'vaatwastabletten' },
+  { re: /halvarine|margarine|roomboter(?!\s*stroop)|^(AH )?boter\b/i, days: 35, label: 'boter/halvarine' },
+  { re: /batterij/i, days: 180, label: 'batterijen' },
+  { re: /tandpasta/i, days: 45, label: 'tandpasta' },
+  { re: /shampoo/i, days: 35, label: 'shampoo' },
+  { re: /deodorant/i, days: 45, label: 'deodorant' },
+  { re: /afwasmiddel/i, days: 60, label: 'afwasmiddel' }
+];
+
+let S = load();
+
+function load() {
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (s && s.orders) return Object.assign({ cfg: {}, current: {} }, s);
+  } catch (e) {}
+  return { orders: [], cfg: {}, current: {} };
+}
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('Opslaan lukt niet in deze browser'); }
+}
+function cfg() {
+  const c = S.cfg;
+  c.removed = c.removed || []; c.extra = c.extra || []; c.qty = c.qty || {};
+  c.ignored = c.ignored || []; c.minShare = c.minShare || 0.5;
+  return c;
+}
+function cur() {
+  const c = S.current;
+  c.done = c.done || {}; c.adds = c.adds || {}; c.skip = c.skip || {}; c.qty = c.qty || {};
+  return c;
+}
+
+function toast(t) {
+  const el = document.getElementById('toast');
+  el.textContent = t; el.classList.add('show');
+  setTimeout(function () { el.classList.remove('show'); }, 2200);
+}
+function h(tag, attrs, kids) {
+  const el = document.createElement(tag);
+  Object.keys(attrs || {}).forEach(function (k) {
+    if (k === 'class') el.className = attrs[k];
+    else if (k === 'text') el.textContent = attrs[k];
+    else if (k.indexOf('on') === 0) el.addEventListener(k.slice(2), attrs[k]);
+    else el.setAttribute(k, attrs[k]);
+  });
+  (kids || []).forEach(function (c) { if (c) el.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+  return el;
+}
+
+// ---------- datum helpers ----------
+function iso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function parse(s) { const p = s.split('-'); return new Date(+p[0], +p[1] - 1, +p[2]); }
+function daysBetween(a, b) { return Math.round((parse(b) - parse(a)) / DAY); }
+function addDays(s, n) { const d = parse(s); d.setDate(d.getDate() + n); return iso(d); }
+function today() { return iso(new Date()); }
+// Eerstvolgende bezorgdag = dinsdag na vandaag; wijzigen kan tot maandag 23:59.
+function nextDelivery() {
+  const d = new Date(); d.setHours(0, 0, 0, 0);
+  do { d.setDate(d.getDate() + 1); } while (d.getDay() !== 2);
+  return iso(d);
+}
+const FMT = new Intl.DateTimeFormat('nl-NL', { weekday: 'long', day: 'numeric', month: 'long' });
+function nice(s) { return FMT.format(parse(s)); }
+function eur(n) { return '€ ' + n.toFixed(2).replace('.', ','); }
+
+// ---------- analyse ----------
+function history() {
+  return S.orders.slice().sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+}
+function productStats() {
+  const map = {};
+  history().forEach(function (o, idx) {
+    const seen = {};
+    o.items.forEach(function (it) {
+      const p = map[it.name] || (map[it.name] = { name: it.name, events: [], price: 0, idxs: [] });
+      if (seen[it.name]) { seen[it.name].qty += it.qty; return; }
+      const ev = { date: o.date, qty: it.qty, idx: idx };
+      seen[it.name] = ev; p.events.push(ev); p.idxs.push(idx);
+      p.price = it.price || p.price;
+    });
+  });
+  return map;
+}
+function median(a) { const s = a.slice().sort(function (x, y) { return x - y; }); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2); }
+
+function standardItems() {
+  const hist = history(); const stats = productStats();
+  const window_ = 12; const n = hist.length; if (!n) return [];
+  const from = Math.max(0, n - window_); const span = n - from;
+  const out = [];
+  Object.keys(stats).forEach(function (name) {
+    const p = stats[name];
+    const recent = p.events.filter(function (e) { return e.idx >= from; });
+    const share = recent.length / span;
+    const lastIdx = p.idxs[p.idxs.length - 1];
+    if (share >= cfg().minShare && n - 1 - lastIdx <= 2) {
+      out.push({ name: name, qty: cfg().qty[name] || median(recent.map(function (e) { return e.qty; })), price: p.price, share: share, auto: true });
+    }
+  });
+  cfg().extra.forEach(function (x) { if (!out.some(function (o) { return o.name === x.name; })) out.push({ name: x.name, qty: cfg().qty[x.name] || x.qty, price: (stats[x.name] || {}).price || 0, share: 0, auto: false }); });
+  return out.filter(function (o) { return cfg().removed.indexOf(o.name) < 0; })
+    .sort(function (a, b) { return b.share - a.share || (a.name < b.name ? -1 : 1); });
+}
+
+// Aankopen per product, maar huishoudcategorieen (bv. alle halvarine-merken) samengenomen.
+function groupedStats() {
+  const groups = {};
+  history().forEach(function (o) {
+    const perGroup = {};
+    o.items.forEach(function (it) {
+      const cat = defaultFor(it.name);
+      const key = cat ? 'cat:' + cat.label : it.name;
+      const g = perGroup[key] || (perGroup[key] = { key: key, qty: 0, name: it.name, price: it.price, cat: cat });
+      g.qty += it.qty; g.name = it.name; g.price = it.price || g.price;
+    });
+    Object.keys(perGroup).forEach(function (k) {
+      const g = perGroup[k];
+      const t = groups[k] || (groups[k] = { key: k, cat: g.cat, events: [], name: g.name, price: g.price });
+      t.events.push({ date: o.date, qty: g.qty }); t.name = g.name; t.price = g.price || t.price;
+    });
+  });
+  return groups;
+}
+
+function suggestions() {
+  const hist = history(); if (!hist.length) return [];
+  const groups = groupedStats(); const T = nextDelivery();
+  const std = {}; standardItems().forEach(function (s) { std[s.name] = 1; });
+  const out = [];
+  Object.keys(groups).forEach(function (key) {
+    const g = groups[key]; const name = g.name;
+    if (std[name] || cfg().ignored.indexOf(key) >= 0 || cfg().ignored.indexOf(name) >= 0) return;
+    const ev = g.events; const last = ev[ev.length - 1];
+    let perUnitDays = null, basis = '', conf = 0;
+    if (ev.length >= 3) {
+      const span = daysBetween(ev[0].date, last.date);
+      const units = ev.slice(0, -1).reduce(function (s, e) { return s + e.qty; }, 0);
+      if (span > 0 && units > 0) { perUnitDays = span / units; basis = 'gemiddeld 1 aankoop per ' + Math.round(perUnitDays * last.qty) + ' dagen (' + ev.length + ' keer gekocht)'; conf = ev.length; }
+    }
+    if (perUnitDays === null) {
+      if (!g.cat) return; // zonder vaste categorie en met < 3 aankopen geen voorspelling
+      perUnitDays = g.cat.days / Math.max(1, last.qty); basis = 'schatting (te weinig historie): ' + g.cat.label + ' ± ' + g.cat.days + ' dagen per verpakking';
+    }
+    const total = Math.round(perUnitDays * last.qty);
+    if (!g.cat && total > 90) return; // te zeldzaam om op te attenderen
+    const runout = addDays(last.date, total);
+    const left = daysBetween(T, runout); // dagen na de bezorging dat het naar verwachting op is
+    if (g.cat) {
+      if (left > 14) return; // nog genoeg voorraad
+      if (left < -Math.max(14, Math.round(total * 0.75))) return; // allang voorbij: waarschijnlijk elders gekocht
+    } else {
+      // gewone producten: alleen bij voldoende historie en als het nu echt (bijna) op moet zijn
+      if (ev.length < 6 || left > 7 || left < -10) return;
+    }
+    out.push({ key: key, name: name, qty: cfg().qty[name] || median(ev.map(function (e) { return e.qty; })), price: g.price, runout: runout, left: left, basis: basis, conf: conf, last: last.date });
+  });
+  return out.sort(function (a, b) { return a.left - b.left; });
+}
+// Overzicht van alle huishoudcategorieen met verwachte "op"-datum, ook als ze nog niet aan de beurt zijn.
+function householdOverview() {
+  const groups = groupedStats(); const out = [];
+  Object.keys(groups).forEach(function (key) {
+    const g = groups[key]; if (!g.cat) return;
+    const ev = g.events; const last = ev[ev.length - 1]; let perUnit;
+    if (ev.length >= 3) { const units = ev.slice(0, -1).reduce(function (s, e) { return s + e.qty; }, 0); const span = daysBetween(ev[0].date, last.date); perUnit = units > 0 && span > 0 ? span / units : g.cat.days; }
+    else perUnit = g.cat.days / Math.max(1, last.qty);
+    const runout = addDays(last.date, Math.round(perUnit * last.qty));
+    if (daysBetween(runout, today()) > 45) return; // al maanden niet meer gekocht: waarschijnlijk elders
+    out.push({ label: g.cat.label, name: g.name, runout: runout, last: last.date, est: ev.length < 3, n: ev.length });
+  });
+  return out.sort(function (a, b) { return a.runout < b.runout ? -1 : 1; });
+}
+function defaultFor(name) { return DEFAULT_INTERVALS.filter(function (d) { return d.re.test(name); })[0]; }
+
+// ---------- huidige bestelling ----------
+function orderLines() {
+  const c = cur(); const lines = [];
+  standardItems().forEach(function (s) { if (!c.skip[s.name]) lines.push({ name: s.name, qty: c.qty[s.name] || s.qty, price: s.price, from: 'standaard' }); });
+  Object.keys(c.adds).forEach(function (name) {
+    if (lines.some(function (l) { return l.name === name; })) return;
+    const st = productStats()[name];
+    lines.push({ name: name, qty: c.qty[name] || c.adds[name], price: st ? st.price : 0, from: 'toegevoegd' });
+  });
+  return lines;
+}
+function ahUrl(name) { return 'https://www.ah.nl/zoeken?query=' + encodeURIComponent(name.replace(/^AH /, '')); }
+
+function render() {
+  renderOrder(); renderSuggest(); renderStandard(); renderData();
+  document.getElementById('next-delivery').textContent = 'Volgende bezorging: ' + nice(nextDelivery()) + ' · wijzigen kan tot maandag 23:59';
+}
+
+function renderOrder() {
+  const v = document.getElementById('order-view'); v.textContent = '';
+  const lines = orderLines(); const c = cur();
+  document.getElementById('n-order').textContent = lines.length ? lines.length : '';
+  if (!S.orders.length) { v.appendChild(h('div', { class: 'empty', text: 'Nog geen bestelgeschiedenis. Ga naar tabblad "Data" om die te importeren.' })); return; }
+  v.appendChild(h('p', { class: 'note', text: 'Zet deze lijst klaar in de Albert Heijn-app. Tik op "Zoek" om het product direct in AH te openen en vink af wat al in je mandje zit.' }));
+  const card = h('div', { class: 'card' }, [h('h3', { text: 'Bestelling voor ' + nice(nextDelivery()) })]);
+  let total = 0;
+  lines.forEach(function (l) {
+    total += l.qty * l.price;
+    const row = h('div', { class: 'row' + (c.done[l.name] ? ' done' : '') }, [
+      h('input', { type: 'checkbox', onchange: function (e) { c.done[l.name] = e.target.checked; save(); renderOrder(); } }),
+      h('div', { class: 'name' }, [l.name, h('span', { class: 'sub', text: (l.price ? eur(l.price) + ' per stuk · ' : '') + l.from })]),
+      qtyCtl(l.name, l.qty, function (n) { c.qty[l.name] = n; save(); renderOrder(); }),
+      h('a', { class: 'ah', href: ahUrl(l.name), target: '_blank', rel: 'noopener', text: 'Zoek' }),
+      h('button', { class: 'btn-sm', title: 'Deze week niet', onclick: function () { if (c.adds[l.name]) delete c.adds[l.name]; else c.skip[l.name] = true; save(); render(); } , text: '✕' })
+    ]);
+    if (c.done[l.name]) row.querySelector('input').checked = true;
+    card.appendChild(row);
+  });
+  if (!lines.length) card.appendChild(h('div', { class: 'empty', text: 'Lijst is leeg.' }));
+  card.appendChild(h('div', { class: 'totals' }, [h('span', { text: 'Geschat totaal (zonder bonus/statiegeld)' }), h('span', { text: eur(total) })]));
+  const add = h('input', { type: 'text', placeholder: 'Extra product toevoegen…', id: 'free-add' });
+  card.appendChild(h('div', { class: 'addrow' }, [add, h('button', { text: '+', onclick: function () { const n = add.value.trim(); if (!n) return; c.adds[n] = 1; save(); render(); } })]));
+  v.appendChild(card);
+  v.appendChild(h('button', { class: 'primary', text: 'Kopieer lijst', onclick: function () { copyText(listText(lines)); } }));
+  if (navigator.share) v.appendChild(h('button', { class: 'secondary', text: 'Deel lijst…', onclick: function () { navigator.share({ title: 'Boodschappen', text: listText(lines) }).catch(function () {}); } }));
+  v.appendChild(h('button', { class: 'secondary', text: 'Bestelling is geplaatst — leer hiervan', onclick: placeOrder }));
+}
+function listText(lines) { return 'Boodschappen ' + nice(nextDelivery()) + '\n' + lines.map(function (l) { return l.qty + 'x ' + l.name; }).join('\n'); }
+function copyText(t) {
+  if (navigator.clipboard) navigator.clipboard.writeText(t).then(function () { toast('Lijst gekopieerd'); }, function () { toast('Kopiëren mislukt'); });
+  else toast('Kopiëren niet ondersteund');
+}
+function placeOrder() {
+  const lines = orderLines();
+  if (!lines.length) return toast('Lijst is leeg');
+  const date = nextDelivery();
+  if (!confirm('Bestelling voor ' + nice(date) + ' (' + lines.length + ' producten) opslaan in de geschiedenis? Daarna verbeteren de voorspellingen.')) return;
+  S.orders = S.orders.filter(function (o) { return o.date !== date; });
+  S.orders.push({ date: date, items: lines.map(function (l) { return { name: l.name, qty: l.qty, price: l.price }; }) });
+  S.current = {}; save(); render(); toast('Opgeslagen');
+}
+function qtyCtl(name, qty, onChange) {
+  return h('div', { class: 'qty' }, [
+    h('button', { text: '−', onclick: function () { if (qty > 1) onChange(qty - 1); } }),
+    h('span', { text: String(qty) }),
+    h('button', { text: '+', onclick: function () { onChange(qty + 1); } })
+  ]);
+}
+
+function renderSuggest() {
+  const v = document.getElementById('suggest-view'); v.textContent = '';
+  const list = suggestions(); const c = cur();
+  document.getElementById('n-suggest').textContent = list.length ? list.length : '';
+  v.appendChild(h('p', { class: 'note', text: 'Producten die je niet elke week koopt, maar waarvan het op basis van eerdere aankopen waarschijnlijk op is rond de volgende bezorging. "Schatting" betekent: te weinig historie, er is een standaardverbruik aangenomen.' }));
+  const card = h('div', { class: 'card' }, [h('h3', { text: 'Waarschijnlijk (bijna) op' })]);
+  if (!list.length) card.appendChild(h('div', { class: 'empty', text: 'Op dit moment lijkt niets op te raken.' }));
+  list.forEach(function (s) {
+    const inOrder = !!c.adds[s.name];
+    const when = s.left <= 0 ? 'waarschijnlijk al op' : 'op rond ' + nice(s.runout);
+    const badge = s.left <= 0 ? h('span', { class: 'badge b-red', text: 'bestellen' }) : s.left <= 7 ? h('span', { class: 'badge b-orange', text: 'binnenkort' }) : h('span', { class: 'badge b-gray', text: 'later' });
+    card.appendChild(h('div', { class: 'row' }, [
+      h('div', { class: 'name' }, [s.name, badge, h('span', { class: 'sub', text: when + ' · laatst gekocht ' + nice(s.last) + ' · ' + s.basis })]),
+      h('button', { class: 'btn-sm', text: inOrder ? '✓ erin' : '+ voeg toe', onclick: function () { if (inOrder) delete c.adds[s.name]; else c.adds[s.name] = s.qty; save(); render(); } }),
+      h('button', { class: 'btn-sm', title: 'Nooit meer voorstellen', text: '✕', onclick: function () { if (confirm('"' + s.name + '" niet meer voorstellen?')) { cfg().ignored.push(s.key); save(); render(); } } })
+    ]));
+  });
+  v.appendChild(card);
+  const hh = h('div', { class: 'card' }, [h('h3', { text: 'Huishoudelijk: verwacht op' })]);
+  householdOverview().forEach(function (o) {
+    hh.appendChild(h('div', { class: 'row' }, [h('div', { class: 'name' }, [o.label, h('span', { class: 'sub', text: 'op rond ' + nice(o.runout) + ' · laatst gekocht ' + nice(o.last) + ' (' + o.name + ')' + (o.est ? ' · schatting' : '') })])]));
+  });
+  v.appendChild(hh);
+}
+
+function renderStandard() {
+  const v = document.getElementById('standard-view'); v.textContent = '';
+  const std = standardItems();
+  v.appendChild(h('p', { class: 'note', text: 'Je vaste bestelling: producten die in minstens de helft van de recente (laatste 12) bestellingen zaten. Pas aantallen aan of haal iets weg; het wordt elke week automatisch opnieuw berekend.' }));
+  const slider = h('input', { type: 'number', min: '20', max: '100', step: '5', value: String(Math.round(cfg().minShare * 100)), onchange: function (e) { cfg().minShare = Math.min(1, Math.max(0.2, (+e.target.value) / 100)); save(); render(); } });
+  v.appendChild(h('div', { class: 'card' }, [h('div', { class: 'addrow', style: 'border-top:none;align-items:center' }, [h('span', { text: 'Minimaal % van bestellingen:' }), slider])]));
+  const card = h('div', { class: 'card' }, [h('h3', { text: 'Standaardbestelling (' + std.length + ')' })]);
+  std.forEach(function (s) {
+    card.appendChild(h('div', { class: 'row' }, [
+      h('div', { class: 'name' }, [s.name, h('span', { class: 'sub', text: s.auto ? 'in ' + Math.round(s.share * 100) + '% van de bestellingen' : 'handmatig toegevoegd' })]),
+      qtyCtl(s.name, s.qty, function (n) { cfg().qty[s.name] = n; save(); render(); }),
+      h('button', { class: 'btn-sm', text: '✕', onclick: function () { cfg().removed.push(s.name); cfg().extra = cfg().extra.filter(function (x) { return x.name !== s.name; }); save(); render(); } })
+    ]));
+  });
+  const add = h('input', { type: 'text', placeholder: 'Vast product toevoegen…' });
+  card.appendChild(h('div', { class: 'addrow' }, [add, h('button', { text: '+', onclick: function () { const n = add.value.trim(); if (!n) return; cfg().removed = cfg().removed.filter(function (x) { return x !== n; }); cfg().extra.push({ name: n, qty: 1 }); save(); render(); } })]));
+  v.appendChild(card);
+  if (cfg().removed.length || cfg().ignored.length) v.appendChild(h('button', { class: 'secondary', text: 'Verwijderde/genegeerde producten terugzetten', onclick: function () { cfg().removed = []; cfg().ignored = []; save(); render(); } }));
+}
+
+function renderData() {
+  const v = document.getElementById('data-view'); v.textContent = '';
+  const hist = history();
+  v.appendChild(h('p', { class: 'note', text: hist.length ? hist.length + ' bestellingen geladen (' + hist[0].date + ' t/m ' + hist[hist.length - 1].date + '). Alles staat alleen in deze browser.' : 'Nog geen bestellingen geladen.' }));
+  const file = h('input', { type: 'file', accept: 'application/json,.json', style: 'display:none', onchange: function (e) { importFile(e.target.files[0]); } });
+  v.appendChild(file);
+  v.appendChild(h('button', { class: 'primary', text: 'Bestelgeschiedenis importeren (.json)', onclick: function () { file.click(); } }));
+  v.appendChild(h('button', { class: 'secondary', text: 'Alles exporteren (back-up / ander apparaat)', onclick: exportAll }));
+  v.appendChild(h('button', { class: 'secondary', text: 'Alles wissen', onclick: function () { if (confirm('Alle gegevens in deze browser wissen?')) { S = { orders: [], cfg: {}, current: {} }; save(); render(); } } }));
+}
+function importFile(f) {
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = function () {
+    try {
+      const data = JSON.parse(r.result);
+      const orders = Array.isArray(data) ? data : data.orders;
+      if (!Array.isArray(orders)) throw new Error('geen bestellingen');
+      const byDate = {}; S.orders.forEach(function (o) { byDate[o.date] = o; });
+      orders.forEach(function (o) { if (o.delivery && !o.date) o.date = o.delivery; if (!o.date || !Array.isArray(o.items)) return; byDate[o.date] = { date: o.date, items: o.items.map(function (i) { return { name: i.name, qty: i.qty, price: i.price }; }) }; });
+      S.orders = Object.keys(byDate).map(function (k) { return byDate[k]; });
+      if (!Array.isArray(data) && data.cfg) S.cfg = data.cfg;
+      save(); render(); toast('Geïmporteerd: ' + S.orders.length + ' bestellingen');
+    } catch (e) { toast('Ongeldig bestand'); }
+  };
+  r.readAsText(f);
+}
+function exportAll() {
+  const blob = new Blob([JSON.stringify({ orders: S.orders, cfg: S.cfg }, null, 1)], { type: 'application/json' });
+  const a = h('a', { href: URL.createObjectURL(blob), download: 'ah-boodschappen-' + today() + '.json' });
+  document.body.appendChild(a); a.click(); a.remove();
+}
+
+document.querySelectorAll('.tab').forEach(function (t) {
+  t.addEventListener('click', function () {
+    document.querySelectorAll('.tab').forEach(function (x) { x.classList.toggle('active', x === t); });
+    document.querySelectorAll('.view').forEach(function (x) { x.classList.toggle('active', x.id === t.dataset.tab + '-view'); });
+  });
+});
+render();
+</script>
+</body>
+</html>
